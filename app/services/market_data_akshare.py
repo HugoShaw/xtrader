@@ -35,8 +35,8 @@ class AkShareAStockProvider:
         symbol: str,
         *,
         include_orderbook: bool = True,
-        min_period: str = "1",          # "1","5","15","30","60"
-        min_lookback_minutes: int = 120 # fetch last N minutes (best-effort)
+        min_period: str = "5",          # "1","5","15","30","60"
+        min_lookback_minutes: int = 300 # fetch last N minutes (best-effort)
     ) -> MarketSnapshot:
         code = symbol.strip()
 

@@ -1,8 +1,11 @@
 # app/services/risk.py
 from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import datetime, timezone, date
+
 from app.models import TradeSignal
+
 
 @dataclass
 class RiskState:
@@ -17,11 +20,12 @@ class RiskState:
             self.trades_today = 0
             self.last_trade_ts = None
 
+
 class RiskManager:
     def __init__(self, max_trades_per_day: int, cooldown_seconds: int, min_confidence: float):
-        self.max_trades_per_day = max_trades_per_day
-        self.cooldown_seconds = cooldown_seconds
-        self.min_confidence = min_confidence
+        self.max_trades_per_day = int(max_trades_per_day)
+        self.cooldown_seconds = int(cooldown_seconds)
+        self.min_confidence = float(min_confidence)
         self.state = RiskState()
 
     def trades_left(self) -> int:

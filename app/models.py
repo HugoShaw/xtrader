@@ -1,5 +1,6 @@
 # app/models.py
 from pydantic import BaseModel, Field
+from dataclasses import dataclass
 from typing import Literal, Optional, List, Dict, Any
 from datetime import datetime
 
@@ -47,3 +48,42 @@ class TradeResult(BaseModel):
     notional_usd: float
     paper: bool = True
     details: Dict[str, Any] = Field(default_factory=dict)
+
+@dataclass(frozen=True)
+class AccountState:
+    cash_cny: float
+    position_shares: int
+    avg_cost_cny: Optional[float] = None
+    unrealized_pnl_cny: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class ExecutionConstraints:
+    horizon_minutes: int = 30
+    max_trades_left_today: int = 0
+    lot_size: int = 100
+    max_order_shares: Optional[int] = None
+    min_confidence_to_trade: float = 0.60
+    fees_bps_est: int = 5
+    slippage_bps_est: int = 5
+
+# -------------------------
+# Request models for /signal and /execute
+# -------------------------
+class AccountStateIn(BaseModel):
+    cash_cny: float = Field(..., ge=0.0)
+    position_shares: int = Field(..., ge=0)
+    avg_cost_cny: Optional[float] = None
+    unrealized_pnl_cny: Optional[float] = None
+
+
+class TradingContextIn(BaseModel):
+    """
+    Your StrategyEngine now requires account state.
+    We also allow overriding "now_ts" for reproducible testing.
+    """
+    account_state: AccountStateIn
+    now_ts: Optional[str] = Field(
+        default=None,
+        description='Optional decision timestamp string like "YYYY-MM-DD HH:MM:SS". If omitted, snapshot.ts is used.',
+    )

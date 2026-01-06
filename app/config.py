@@ -16,6 +16,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
+        validate_default=True,  # 🔥 important
     )
 
     # Market data provider
@@ -35,5 +36,7 @@ class Settings(BaseSettings):
     fixed_trade_amount_usd: float = Field(default=200.0, alias="FIXED_TRADE_AMOUNT_USD")
     min_confidence: float = Field(default=0.60, alias="MIN_CONFIDENCE")
 
-
+    # Database
+    database_url: str = Field(default="sqlite+aiosqlite:///./xtrader.db", alias="DATABASE_URL") 
+    
 settings = Settings()

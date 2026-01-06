@@ -3,109 +3,387 @@
 <head>
   <meta charset="utf-8"/>
   <title>A-Share Backtest</title>
+
+  <!-- Plotly -->
+  <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+
   <style>
     body { font-family: Arial, sans-serif; margin: 18px; }
+    h2 { margin-bottom: 6px; }
+    h3 { margin: 6px 0 10px; }
+
     .row { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
     label { font-size: 12px; color:#444; display:block; margin-bottom: 4px; }
     input, select { padding:8px; border:1px solid #ccc; border-radius:8px; }
-    button { padding:10px 14px; border:0; border-radius:10px; cursor:pointer; }
+    button { padding:10px 14px; border:0; border-radius:10px; cursor:pointer; background:#1677ff; color:#fff; }
+    button.secondary { background:#555; }
+
     #msg { margin-top: 10px; color:#555; font-size: 12px; }
-    iframe { width:100%; height: 760px; border: 1px solid #ddd; border-radius: 10px; margin-top: 14px; }
-    .card { border:1px solid #ddd; border-radius:12px; padding:12px; margin-top: 12px; }
-    pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; }
+
+    iframe {
+      width:100%;
+      height: 760px;
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      margin-top: 14px;
+    }
+
+    .card {
+      border:1px solid #ddd;
+      border-radius:12px;
+      padding:12px;
+      margin-top: 14px;
+    }
+
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 12px;
+      background:#fafafa;
+      padding:10px;
+      border-radius:8px;
+      max-height: 360px;
+      overflow:auto;
+    }
+
+    #price_chart {
+      width:100%;
+      height: 560px;
+    }
+
+    .divider {
+      margin: 18px 0;
+      border-top: 1px dashed #ddd;
+    }
+
+    .muted {
+      color:#666;
+      font-size: 12px;
+    }
   </style>
 </head>
+
 <body>
   <h2>A-Share Backtest (AkShare + vectorbt)</h2>
 
-  <div class="row">
-    <div>
-      <label>Symbol (6 digits)</label>
-      <input id="symbol" value="600519"/>
-    </div>
-    <div>
-      <label>Start (YYYY-MM-DD HH:MM:SS)</label>
-      <input id="start" value="2025-12-01 09:30:00"/>
-    </div>
-    <div>
-      <label>End (YYYY-MM-DD HH:MM:SS)</label>
-      <input id="end" value="2025-12-31 15:00:00"/>
-    </div>
-    <div>
-      <label>Freq</label>
-      <select id="freq">
-        <option value="1">1min</option>
-        <option value="5" selected>5min</option>
-        <option value="15">15min</option>
-        <option value="30">30min</option>
-        <option value="60">60min</option>
-      </select>
-    </div>
-    <div>
-      <label>Fixed Notional</label>
-      <input id="notional" value="200"/>
-    </div>
-    <div>
-      <label>Max Trades/Day</label>
-      <input id="maxTrades" value="10"/>
-    </div>
-
-    <button onclick="runBacktest()">Run</button>
-    <button onclick="openReport()">Open Report</button>
-  </div>
-
-  <div id="msg"></div>
-
+  <!-- ========================= -->
+  <!-- Backtest controls -->
+  <!-- ========================= -->
   <div class="card">
-    <b>JSON summary</b>
-    <pre id="json"></pre>
+    <h3>Backtest</h3>
+
+    <div class="row">
+      <div>
+        <label>Symbol (6 digits)</label>
+        <input id="symbol" value="600519"/>
+      </div>
+
+      <div>
+        <label>Start (YYYY-MM-DD HH:MM:SS)</label>
+        <input id="start" value="2025-12-01 09:30:00"/>
+      </div>
+
+      <div>
+        <label>End (YYYY-MM-DD HH:MM:SS)</label>
+        <input id="end" value="2025-12-31 15:00:00"/>
+      </div>
+
+      <div>
+        <label>Freq</label>
+        <select id="freq">
+          <option value="1">1min</option>
+          <option value="5" selected>5min</option>
+          <option value="15">15min</option>
+          <option value="30">30min</option>
+          <option value="60">60min</option>
+        </select>
+      </div>
+
+      <div>
+        <label>Fixed Notional</label>
+        <input id="notional" value="200"/>
+      </div>
+
+      <div>
+        <label>Max Trades/Day</label>
+        <input id="maxTrades" value="10"/>
+      </div>
+
+      <button onclick="runBacktest()">Run</button>
+      <button class="secondary" onclick="openReport()">Open Report</button>
+    </div>
+
+    <div id="msg"></div>
+
+    <div class="card">
+      <b>JSON summary</b>
+      <pre id="json"></pre>
+    </div>
+
+    <iframe id="report" title="report"></iframe>
   </div>
 
-  <iframe id="report" title="report"></iframe>
+  <div class="divider"></div>
+
+  <!-- ========================= -->
+  <!-- Candlestick chart -->
+  <!-- ========================= -->
+  <div class="card">
+    <h3>Price Chart (Continuous Candlestick)</h3>
+
+    <div class="row">
+      <div>
+        <label>Symbol</label>
+        <input id="chart_symbol" value="600519"/>
+      </div>
+
+      <div>
+        <label>Start</label>
+        <input id="chart_start" value="2025-12-01 09:30:00"/>
+      </div>
+
+      <div>
+        <label>End</label>
+        <input id="chart_end" value="2025-12-01 15:00:00"/>
+      </div>
+
+      <div>
+        <label>Freq</label>
+        <select id="chart_freq">
+          <option value="1">1min</option>
+          <option value="5" selected>5min</option>
+          <option value="15">15min</option>
+          <option value="30">30min</option>
+          <option value="60">60min</option>
+        </select>
+      </div>
+
+      <div>
+        <label>Gap handling</label>
+        <select id="gap_mode">
+          <option value="rangebreaks" selected>Hide non-trading time (recommended)</option>
+          <option value="categorical">No gaps (categorical axis)</option>
+        </select>
+      </div>
+
+      <button onclick="loadCandleChart()">Load</button>
+      <button class="secondary" onclick="resetChart()">Reset</button>
+    </div>
+
+    <div class="muted" style="margin-top:8px;">
+      Tip: “Hide non-trading time” keeps real timestamps but removes lunch/overnight gaps. “Categorical” removes all gaps completely.
+    </div>
+
+    <div id="price_chart"></div>
+  </div>
 
 <script>
-  function qs() {
-    const symbol = document.getElementById('symbol').value.trim();
-    const start = document.getElementById('start').value.trim();
-    const end = document.getElementById('end').value.trim();
-    const freq = document.getElementById('freq').value;
-    const fixed_notional = document.getElementById('notional').value.trim();
-    const max_trades_per_day = document.getElementById('maxTrades').value.trim();
+/* =========================
+   Helpers
+========================= */
+function qs() {
+  const symbol = document.getElementById('symbol').value.trim();
+  const start = document.getElementById('start').value.trim();
+  const end = document.getElementById('end').value.trim();
+  const freq = document.getElementById('freq').value;
+  const fixed_notional = document.getElementById('notional').value.trim();
+  const max_trades_per_day = document.getElementById('maxTrades').value.trim();
 
-    const p = new URLSearchParams({symbol, start, end, freq, fixed_notional, max_trades_per_day});
-    return p.toString();
+  const p = new URLSearchParams({symbol, start, end, freq, fixed_notional, max_trades_per_day});
+  return p.toString();
+}
+
+function safeNum(v) {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : null;
+}
+
+function pad2(n){ return String(n).padStart(2, "0"); }
+
+/**
+ * A-share trading breaks:
+ * - lunch break: 11:30–13:00 (Asia/Shanghai)
+ * - no trading overnight
+ *
+ * Plotly rangebreaks:
+ *  - bounds: [startHour, endHour] => break that hour-range everyday
+ *  - pattern: "day of week" => skip weekends
+ *
+ * Note: Plotly rangebreaks work best when xaxis.type="date" and x values are parseable datetimes.
+ */
+function makeAshareRangebreaks() {
+  return [
+    // Skip weekends
+    { pattern: "day of week", bounds: [6, 1] }, // from Sat(6) to Mon(1)
+    // Skip lunch break (11:30-13:00)
+    // Plotly hour bounds are in hours; for 11:30, we use 11.5
+    { pattern: "hour", bounds: [11.5, 13] },
+    // Skip overnight: 15:00 -> next day 9:30
+    // 15 to 9.5 means from 15:00 to 09:30 (next day)
+    { pattern: "hour", bounds: [15, 9.5] }
+  ];
+}
+
+/* =========================
+   Backtest
+========================= */
+async function runBacktest() {
+  document.getElementById('msg').innerText = "Running backtest...";
+  document.getElementById('json').innerText = "";
+  document.getElementById('report').src = "";
+
+  const url = "/api/backtest/run?" + qs();
+  const resp = await fetch(url);
+  const data = await resp.json();
+
+  if (!resp.ok) {
+    document.getElementById('msg').innerText = "Error: " + (data.detail || resp.statusText);
+    return;
   }
 
-  async function runBacktest() {
-    document.getElementById('msg').innerText = "Running backtest...";
-    document.getElementById('json').innerText = "";
-    document.getElementById('report').src = "";
+  document.getElementById('msg').innerText = "Done.";
 
-    const url = "/api/backtest/run?" + qs();
-    const resp = await fetch(url);
-    const data = await resp.json();
+  const slim = {
+    symbol: data.symbol,
+    freq: data.freq,
+    start: data.start,
+    end: data.end,
+    note: data.note,
+    stats: data.stats
+  };
+  document.getElementById('json').innerText = JSON.stringify(slim, null, 2);
+}
 
-    if (!resp.ok) {
-      document.getElementById('msg').innerText = "Error: " + (data.detail || resp.statusText);
-      return;
+function openReport() {
+  document.getElementById('msg').innerText = "Loading report...";
+  document.getElementById('report').src = "/api/backtest/report?" + qs();
+}
+
+/* =========================
+   Candlestick chart (continuous)
+========================= */
+let lastPlot = null;
+
+async function loadCandleChart() {
+  const symbol = document.getElementById('chart_symbol').value.trim();
+  const start = document.getElementById('chart_start').value.trim();
+  const end = document.getElementById('chart_end').value.trim();
+  const freq = document.getElementById('chart_freq').value;
+  const gapMode = document.getElementById('gap_mode').value;
+
+  const params = new URLSearchParams({
+    symbol,
+    start,
+    end,
+    freq,
+    limit: "2000"
+  });
+
+  const url = "/api/stock/bars?" + params.toString();
+  const resp = await fetch(url);
+  const data = await resp.json();
+
+  if (!resp.ok) {
+    alert("Error: " + (data.detail || resp.statusText));
+    return;
+  }
+
+  const bars = data.bars || [];
+  if (bars.length === 0) {
+    alert("No data returned.");
+    return;
+  }
+
+  // Build OHLC arrays
+  const x = [];
+  const o = [];
+  const h = [];
+  const l = [];
+  const c = [];
+
+  for (const b of bars) {
+    const oo = safeNum(b.open);
+    const hh = safeNum(b.high);
+    const ll = safeNum(b.low);
+    const cc = safeNum(b.close);
+    if (oo === null || hh === null || ll === null || cc === null) continue;
+
+    // Expect b.ts like "YYYY-MM-DD HH:MM:SS"
+    // Plotly parses it as local time; good enough for visual continuity.
+    x.push(b.ts);
+    o.push(oo);
+    h.push(hh);
+    l.push(ll);
+    c.push(cc);
+  }
+
+  if (x.length === 0) {
+    alert("Bars exist but missing OHLC fields. Ensure backend returns open/high/low/close.");
+    return;
+  }
+
+  // Candlestick trace
+  const candle = {
+    type: "candlestick",
+    x: x,
+    open: o,
+    high: h,
+    low: l,
+    close: c,
+    name: `${data.symbol} OHLC`,
+  };
+
+  // Two modes:
+  // 1) rangebreaks: keep real timestamps but hide non-trading periods (recommended)
+  // 2) categorical: treat each bar as the next index (removes all gaps completely)
+  let layout;
+  if (gapMode === "categorical") {
+    // categorical axis: continuous bars, no time gaps at all
+    // we keep labels sparse to avoid clutter
+    const tickStep = Math.max(1, Math.floor(x.length / 8));
+    const tickvals = [];
+    const ticktext = [];
+    for (let i = 0; i < x.length; i += tickStep) {
+      tickvals.push(x[i]);
+      ticktext.push(x[i]); // show full timestamp; you can shorten
     }
-    document.getElementById('msg').innerText = "Done.";
-    // show only part of JSON to avoid huge output
-    const slim = {
-      symbol: data.symbol,
-      freq: data.freq,
-      start: data.start,
-      end: data.end,
-      note: data.note,
-      stats: data.stats
+
+    layout = {
+      title: `${data.symbol} Candlestick (${data.freq}min) — categorical`,
+      xaxis: {
+        type: "category",
+        rangeslider: { visible: false },
+        tickmode: "array",
+        tickvals: tickvals,
+        ticktext: ticktext,
+        title: "Bar Index (timestamp labels)",
+      },
+      yaxis: { title: "Price" },
+      margin: { l: 50, r: 20, t: 50, b: 60 },
     };
-    document.getElementById('json').innerText = JSON.stringify(slim, null, 2);
+  } else {
+    // rangebreaks: remove lunch/overnight/weekends -> visually continuous while keeping time semantics
+    layout = {
+      title: `${data.symbol} Candlestick (${data.freq}min) — rangebreaks`,
+      xaxis: {
+        type: "date",
+        rangeslider: { visible: false },
+        title: "Time",
+        rangebreaks: makeAshareRangebreaks(),
+      },
+      yaxis: { title: "Price" },
+      margin: { l: 50, r: 20, t: 50, b: 50 },
+    };
   }
 
-  function openReport() {
-    document.getElementById('msg').innerText = "Loading report...";
-    document.getElementById('report').src = "/api/backtest/report?" + qs();
-  }
+  lastPlot = { candle, layout };
+  Plotly.newPlot("price_chart", [candle], layout, { responsive: true });
+}
+
+function resetChart() {
+  if (!lastPlot) return;
+  Plotly.newPlot("price_chart", [lastPlot.candle], lastPlot.layout, { responsive: true });
+}
 </script>
 </body>
 </html>
