@@ -12,6 +12,10 @@ class Bar(BaseModel):
     close: float
     volume: float
 
+    # NEW: from ak.stock_zh_a_hist_min_em()
+    amount: Optional[float] = None   # 成交额
+    vwap: Optional[float] = None     # 均价 (avg price)
+
 class MarketSnapshot(BaseModel):
     symbol: str
     ts: datetime  # snapshot time (UTC recommended)
@@ -30,13 +34,13 @@ class TradeSignal(BaseModel):
     horizon_minutes: int = 30
     confidence: float = Field(ge=0.0, le=1.0)
     reason: str
-    suggested_notional_usd: float
+    suggested_notional_cny: float
     expected_direction: Literal["UP", "DOWN", "FLAT"]
-    risk_notes: Optional[str] = None
+    risk_notes: str = ""   # <-- make required + safe default
 
 class TradeRequest(BaseModel):
     symbol: str
-    notional_usd: float
+    notional_cny: float
     action: Literal["BUY", "SELL"]
 
 class TradeResult(BaseModel):
@@ -45,7 +49,7 @@ class TradeResult(BaseModel):
     ts: datetime
     symbol: str
     action: str
-    notional_usd: float
+    notional_cny: float
     paper: bool = True
     details: Dict[str, Any] = Field(default_factory=dict)
 
@@ -63,9 +67,10 @@ class ExecutionConstraints:
     max_trades_left_today: int = 0
     lot_size: int = 100
     max_order_shares: Optional[int] = None
-    min_confidence_to_trade: float = 0.60
+    min_confidence_to_trade: float = 0.65
     fees_bps_est: int = 5
     slippage_bps_est: int = 5
+    currency: str = "CNY"
 
 # -------------------------
 # Request models for /signal and /execute

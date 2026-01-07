@@ -30,13 +30,13 @@ class Settings(BaseSettings):
     llm_model: str = Field(default="deepseek-chat", alias="LLM_MODEL")
 
     # Trading guardrails
-    max_trades_per_day: int = Field(default=10, alias="MAX_TRADES_PER_DAY")
-    trade_cooldown_seconds: int = Field(default=180, alias="TRADE_COOLDOWN_SECONDS")
-    max_position_value_usd: float = Field(default=5000.0, alias="MAX_POSITION_VALUE_USD")
-    fixed_trade_amount_usd: float = Field(default=200.0, alias="FIXED_TRADE_AMOUNT_USD")
-    min_confidence: float = Field(default=0.60, alias="MIN_CONFIDENCE")
+    max_trades_per_day: int = Field(default=5, alias="MAX_TRADES_PER_DAY")
+    trade_cooldown_seconds: int = Field(default=1200, alias="TRADE_COOLDOWN_SECONDS")
+    max_position_value_cny: float = Field(default=100000.0, alias="MAX_POSITION_VALUE_CNY")
+    fixed_trade_amount_cny: float = Field(default=5000.0, alias="FIXED_TRADE_AMOUNT_CNY")
+    min_confidence: float = Field(default=0.65, alias="MIN_CONFIDENCE")
 
     # Database
     database_url: str = Field(default="sqlite+aiosqlite:///./xtrader.db", alias="DATABASE_URL") 
-    
+
 settings = Settings()

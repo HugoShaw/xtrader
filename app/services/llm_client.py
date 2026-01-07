@@ -224,6 +224,11 @@ class OpenAICompatLLM:
             logger.info(
                 f"LLM chat_json parsed ok | model={self.model} | keys={sorted(list(obj.keys()))}"
             )
+
+            allowed = set(schema_hint.get("properties", {}).keys())
+            extra = set(obj.keys()) - allowed
+            if extra:
+                raise ValueError(f"LLM returned extra keys not allowed: {sorted(extra)}")
         except json.JSONDecodeError as e:
             # Log parse error with snippet to debug (truncate)
             snippet = (content or "")[:500]

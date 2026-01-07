@@ -1,3 +1,4 @@
+# /app/services/market_data_akshare.py
 from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
@@ -7,8 +8,12 @@ import pandas as pd
 from fastapi.concurrency import run_in_threadpool
 
 import akshare as ak
+from zoneinfo import ZoneInfo
 
+from app.logging_config import logger
 from app.models import MarketSnapshot, Bar
+
+CN_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def _to_float(x) -> Optional[float]:
@@ -20,14 +25,29 @@ def _to_float(x) -> Optional[float]:
         return None
 
 
+def _parse_end_ts_cn(end_ts: Optional[str]) -> Optional[datetime]:
+    """
+    Parse end_ts in Shanghai time: "YYYY-MM-DD HH:MM:SS" -> aware datetime in Asia/Shanghai.
+    """
+    if not end_ts:
+        return None
+    s = str(end_ts).strip()
+    if not s:
+        return None
+    try:
+        dt = datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+        return dt.replace(tzinfo=CN_TZ)
+    except Exception as e:
+        raise ValueError(f"Invalid end_ts format: {end_ts!r} (expect 'YYYY-MM-DD HH:MM:SS' in Asia/Shanghai)") from e
+
+
 class AkShareAStockProvider:
     """
     Mainland A-share (沪深京) market data via AkShare/Eastmoney.
 
-    Key interfaces used:
-    - ak.stock_zh_a_spot_em()   : all A-share real-time quotes (snapshot table) :contentReference[oaicite:3]{index=3}
-    - ak.stock_bid_ask_em()     : 5-level order book snapshot (symbol: 6-digit) :contentReference[oaicite:4]{index=4}
-    - ak.stock_zh_a_hist_min_em(): minute intraday bars (recent only; upstream-limited) :contentReference[oaicite:5]{index=5}
+    Supports:
+      - end_ts: decision time in Asia/Shanghai ("YYYY-MM-DD HH:MM:SS")
+        Used to align the bar window end time for reproducible tests.
     """
 
     async def get_snapshot(
@@ -35,8 +55,9 @@ class AkShareAStockProvider:
         symbol: str,
         *,
         include_orderbook: bool = True,
-        min_period: str = "5",          # "1","5","15","30","60"
-        min_lookback_minutes: int = 300 # fetch last N minutes (best-effort)
+        min_period: str = "5",            # "1","5","15","30","60"
+        min_lookback_minutes: int = 300,  # fetch last N minutes (best-effort)
+        end_ts: Optional[str] = None,     # ✅ NEW: Shanghai time string
     ) -> MarketSnapshot:
         code = symbol.strip()
 
@@ -48,7 +69,6 @@ class AkShareAStockProvider:
 
         r0 = row.iloc[0].to_dict()
 
-        # Common fields in this table include 最新价, 成交量, 成交额, 振幅, 涨跌幅... (varies with AkShare version)
         last_price = _to_float(r0.get("最新价"))
         if last_price is None:
             raise ValueError(f"missing 最新价 for {code}")
@@ -62,15 +82,20 @@ class AkShareAStockProvider:
             except Exception:
                 orderbook = None
 
-        # 3) Minute bars (best-effort, recent window)
+        # 3) Minute bars (best-effort, recent window) aligned to end_ts if provided
         recent_bars: List[Bar] = []
-        end_dt = datetime.now(timezone.utc)
-        start_dt = end_dt - timedelta(minutes=min_lookback_minutes)
+
+        end_dt_cn = _parse_end_ts_cn(end_ts) or datetime.now(CN_TZ)
+        start_dt_cn = end_dt_cn - timedelta(minutes=int(min_lookback_minutes))
 
         # AkShare expects local-market timestamps formatted like "YYYY-MM-DD HH:MM:SS"
-        # We pass naive strings; you can convert to Asia/Shanghai precisely if you want.
-        start_str = start_dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        end_str = end_dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        start_str = start_dt_cn.strftime("%Y-%m-%d %H:%M:%S")
+        end_str = end_dt_cn.strftime("%Y-%m-%d %H:%M:%S")
+
+        logger.warning(
+            "AKSHARE range | symbol=%s start=%s end=%s period=%s end_ts_input=%r",
+            code, start_str, end_str, min_period, end_ts
+        )
 
         try:
             min_df = await run_in_threadpool(
@@ -79,35 +104,86 @@ class AkShareAStockProvider:
                 start_str,
                 end_str,
                 min_period,
-                ""  # adjust="" for intraday; upstream-limited :contentReference[oaicite:6]{index=6}
+                ""  # adjust="" for intraday
             )
-            # Typical columns: 时间/开盘/收盘/最高/最低/成交量/成交额 (may differ)
-            # Normalize
-            if not min_df.empty:
+
+            logger.warning(
+                "AKSHARE min_df | symbol=%s rows=%s cols=%s",
+                code,
+                0 if min_df is None else len(min_df),
+                None if min_df is None else list(min_df.columns),
+            )
+
+            if min_df is not None and not min_df.empty:
+                logger.warning("AKSHARE sample rows:\n%s", min_df.head(3).to_string())
+
+            if min_df is not None and not min_df.empty:
                 # Some versions use "时间", some use "日期"
                 tcol = "时间" if "时间" in min_df.columns else ("日期" if "日期" in min_df.columns else None)
-                if tcol:
-                    min_df[tcol] = pd.to_datetime(min_df[tcol])
-                    for _, rr in min_df.tail(500).iterrows():
+                if tcol is not None:
+                    min_df[tcol] = pd.to_datetime(min_df[tcol], errors="coerce")
+                    min_df = min_df.dropna(subset=[tcol])
+
+                    # IMPORTANT:
+                    # - Treat returned timestamps as China local time by default.
+                    # - Convert them to UTC for your Bar.ts (your system assumes UTC on bars).
+                    # This avoids the old bug: `.replace(tzinfo=timezone.utc)` (wrong) which
+                    # interprets CN timestamps as if they were already UTC.
+                    dt_cn = min_df[tcol].dt.tz_localize(CN_TZ, nonexistent="shift_forward", ambiguous="NaT")
+                    min_df = min_df.assign(_ts_utc=dt_cn.dt.tz_convert(timezone.utc))
+
+                    # Guard: keep only bars <= end_dt_cn (in CN time)
+                    end_dt_utc = end_dt_cn.astimezone(timezone.utc)
+                    min_df = min_df[min_df["_ts_utc"] <= end_dt_utc]
+
+                    # keep last N rows
+                    min_df = min_df.tail(500)
+
+                    for _, rr in min_df.iterrows():
+                        ts_utc = rr["_ts_utc"].to_pydatetime()
+
+                        o = _to_float(rr.get("开盘", rr.get("open", rr.get("Open")))) or 0.0
+                        h = _to_float(rr.get("最高", rr.get("high", rr.get("High")))) or 0.0
+                        l = _to_float(rr.get("最低", rr.get("low", rr.get("Low")))) or 0.0
+                        c = _to_float(rr.get("收盘", rr.get("close", rr.get("Close", rr.get("最新价"))))) or 0.0
+                        v = _to_float(rr.get("成交量", rr.get("volume", rr.get("Volume")))) or 0.0
+
+                        # amount + vwap
+                        amt = _to_float(rr.get("成交额", rr.get("amount", rr.get("Amount"))))
+                        avgp = _to_float(rr.get("均价", rr.get("vwap", rr.get("VWAP", rr.get("avg_price")))))
+
                         recent_bars.append(
                             Bar(
-                                ts=rr[tcol].to_pydatetime().replace(tzinfo=timezone.utc),
-                                open=float(rr.get("开盘", rr.get("open", rr.get("Open", 0))) or 0),
-                                high=float(rr.get("最高", rr.get("high", rr.get("High", 0))) or 0),
-                                low=float(rr.get("最低", rr.get("low", rr.get("Low", 0))) or 0),
-                                close=float(rr.get("收盘", rr.get("最新价", rr.get("close", rr.get("Close", 0)))) or 0),
-                                volume=float(rr.get("成交量", rr.get("volume", rr.get("Volume", 0))) or 0),
+                                ts=ts_utc,
+                                open=float(o),
+                                high=float(h),
+                                low=float(l),
+                                close=float(c),
+                                volume=float(v),
+                                amount=amt,
+                                vwap=avgp,
                             )
                         )
-        except Exception:
-            # Minute feed is “best-effort”; upstream can limit ranges :contentReference[oaicite:7]{index=7}
+
+        except Exception as e:
+            logger.exception(
+                "AKSHARE ERROR | symbol=%s period=%s lookback_min=%s end_ts=%r err=%s",
+                code,
+                min_period,
+                min_lookback_minutes,
+                end_ts,
+                e,
+            )
             recent_bars = []
+
+        # Ensure ascending (defensive)
+        recent_bars.sort(key=lambda b: b.ts)
 
         # 4) Build snapshot
         snapshot = MarketSnapshot(
             symbol=code,
             ts=datetime.now(timezone.utc),
-            last_price=last_price,
+            last_price=float(last_price),
             day_open=_to_float(r0.get("今开")),
             day_high=_to_float(r0.get("最高")),
             day_low=_to_float(r0.get("最低")),
@@ -119,6 +195,8 @@ class AkShareAStockProvider:
                 "source": "akshare/eastmoney",
                 "raw_spot_row": r0,
                 "orderbook": orderbook,
+                # Helpful debug meta:
+                "bars_window_cn": {"start": start_str, "end": end_str, "period": min_period},
             },
         )
         return snapshot

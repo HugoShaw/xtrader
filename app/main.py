@@ -3,13 +3,12 @@ from __future__ import annotations
 
 from pathlib import Path
 from contextlib import asynccontextmanager
-from typing import Optional, Any, Dict, List
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field
 
 from app.config import settings
 
@@ -20,14 +19,15 @@ from app.services.market_data import build_market_provider
 from app.services.llm_client import OpenAICompatLLM
 from app.services.risk import RiskManager
 from app.services.broker import PaperBroker
-from app.services.strategy import StrategyEngine 
+from app.services.strategy import StrategyEngine
 from app.services.trade_history_db import TradeHistoryDB
 
 from app.services.backtest import BacktestParams, run_backtest, build_report_html
 from app.services.stock_api import fetch_cn_minute_bars, bars_to_payload
 
 from app.models_llm import LLMChatRequest, LLMChatResponse, ChatMessage
-from app.models import TradingContextIn
+from app.models import TradingContextIn, AccountState
+
 
 # -------------------------
 # Lifespan (startup / shutdown)
@@ -41,15 +41,65 @@ async def lifespan(app: FastAPI):
     print(f"LLM_MODEL       = {settings.llm_model}")
     print(f"DATABASE_URL    = {settings.database_url}")
 
-    # init DB
+    # 1) DB engine + session factory
+    db_engine = make_engine(settings.database_url)
+    session_factory = make_session_factory(db_engine)
+
+    # 2) Init DB schema + SQLite pragmas
     await init_db(db_engine)
 
-    yield
+    # 3) Save to app.state
+    app.state.db_engine = db_engine
+    app.state.session_factory = session_factory
 
-    await db_engine.dispose()
+    # 4) DB-backed trade history
+    trade_history_db = TradeHistoryDB(session_factory, max_records=10)
+    app.state.trade_history_db = trade_history_db
 
-    # -------- shutdown --------
-    print("🛑 xtrader shutting down...")
+    # 5) Core services
+    market = build_market_provider(settings.market_provider)
+
+    llm = OpenAICompatLLM(
+        base_url=settings.llm_base_url,
+        api_key=settings.llm_api_key,
+        model=settings.llm_model,
+    )
+    app.state.llm = llm  # ✅ used by /api/llm/chat
+
+    risk = RiskManager(
+        max_trades_per_day=settings.max_trades_per_day,
+        cooldown_seconds=settings.trade_cooldown_seconds,
+        min_confidence=settings.min_confidence,
+        max_position_value_cny=settings.max_position_value_cny,
+    )
+    app.state.risk = risk
+
+    broker = PaperBroker()
+    app.state.broker = broker
+
+    # 6) Trading engine (uses DB-backed trade history)
+    trading_engine = StrategyEngine(
+        market=market,
+        llm=llm,
+        risk=risk,
+        broker=broker,
+        fixed_amount_cny=settings.fixed_trade_amount_cny,
+        trade_history_db=trade_history_db, 
+        timezone_name="Asia/Shanghai",
+        lot_size=100,
+        max_order_shares=1000,
+        fees_bps_est=5,
+        slippage_bps_est=5,
+        market_kwargs={"min_period": "5", "min_lookback_minutes": 300, "include_orderbook": True},
+    ) 
+    app.state.trading_engine = trading_engine
+
+    try:
+        yield
+    finally:
+        # -------- shutdown --------
+        print("🛑 xtrader shutting down...")
+        await db_engine.dispose()
 
 
 # -------------------------
@@ -79,45 +129,6 @@ def normalize_cn_symbol(symbol: str) -> str:
     if len(s) != 6 or not s.isdigit():
         raise HTTPException(status_code=400, detail=f"Invalid A-share symbol: {symbol} (expect 6-digit code)")
     return s
- 
-# -------------------------
-# Wire core services
-# -------------------------
-db_engine = make_engine(settings.database_url)
-session_factory = make_session_factory(db_engine)
-
-market = build_market_provider(settings.market_provider)
-
-llm = OpenAICompatLLM(
-    base_url=settings.llm_base_url,
-    api_key=settings.llm_api_key,
-    model=settings.llm_model,
-)
-
-risk = RiskManager(
-    max_trades_per_day=settings.max_trades_per_day,
-    cooldown_seconds=settings.trade_cooldown_seconds,
-    min_confidence=settings.min_confidence,
-)
-
-broker = PaperBroker()
-
-# New: keep trade history for LLM self-correction feedback
-trade_history = TradeHistoryDB(session_factory, max_records=10)
-
-trading_engine = StrategyEngine(
-    market=market,
-    llm=llm,
-    risk=risk,
-    broker=broker,
-    fixed_amount_usd=settings.fixed_trade_amount_usd,
-    trade_history=trade_history,
-    timezone_name="Asia/Shanghai",
-    lot_size=100,
-    max_order_shares=1000,
-    fees_bps_est=5,
-    slippage_bps_est=5,
-)
 
 
 # -------------------------
@@ -130,38 +141,35 @@ async def health():
 
 @app.get("/risk", tags=["trading"])
 async def risk_status():
+    risk = app.state.risk
     return {
         "max_trades_per_day": settings.max_trades_per_day,
         "trades_left_today": risk.trades_left(),
         "cooldown_seconds": settings.trade_cooldown_seconds,
         "min_confidence": settings.min_confidence,
-        "fixed_trade_amount_usd": settings.fixed_trade_amount_usd,
+        "fixed_trade_amount_cny": settings.fixed_trade_amount_cny,
     }
 
 
 # -------------------------
-# Updated trading routes (account-aware)
+# Trading routes (account-aware)
 # -------------------------
 @app.post("/signal/{symbol}", tags=["trading"])
 async def signal(symbol: str, ctx: TradingContextIn):
     """
-    NEW (account-aware):
+    Account-aware signal:
     Build prompt including account_state + execution_constraints + trade_history + bars_5m,
     then request a TradeSignal JSON from LLM.
     """
     code = normalize_cn_symbol(symbol)
     try:
-        account = trading_engine.__class__.__mro__  # no-op; keeps linters calm if you later refactor imports
-        # Convert to StrategyEngine.AccountState dataclass via prompt_builder.AccountState signature
-        # (StrategyEngine expects prompt_builder.AccountState)
-        from app.services.prompt_builder import AccountState as AccountStateDC
-
-        acc = AccountStateDC(
+        acc = AccountState(
             cash_cny=ctx.account_state.cash_cny,
             position_shares=ctx.account_state.position_shares,
             avg_cost_cny=ctx.account_state.avg_cost_cny,
             unrealized_pnl_cny=ctx.account_state.unrealized_pnl_cny,
         )
+        trading_engine: StrategyEngine = app.state.trading_engine
         sig = await trading_engine.get_signal(code, account=acc, now_ts=ctx.now_ts)
         return sig
     except HTTPException:
@@ -173,30 +181,31 @@ async def signal(symbol: str, ctx: TradingContextIn):
 @app.post("/execute/{symbol}", tags=["trading"])
 async def execute(symbol: str, ctx: TradingContextIn):
     """
-    NEW (account-aware) paper execute:
-    - If signal is HOLD: returns ok=True, no broker order.
-    - Else: if passes RiskManager guardrails -> place paper order.
-    Also appends a feedback record to trade_history (best-effort).
+    Account-aware paper execute:
+    - HOLD => ok=True, no broker order
+    - BUY/SELL => risk-checked, place paper order
+    Also saves execution record into DB (ExecutionRepo).
     """
     code = normalize_cn_symbol(symbol)
     try:
-        from app.services.prompt_builder import AccountState as AccountStateDC
-
-        acc = AccountStateDC(
+        acc = AccountState(
             cash_cny=ctx.account_state.cash_cny,
             position_shares=ctx.account_state.position_shares,
             avg_cost_cny=ctx.account_state.avg_cost_cny,
             unrealized_pnl_cny=ctx.account_state.unrealized_pnl_cny,
         )
+
+        trading_engine: StrategyEngine = app.state.trading_engine
         res = await trading_engine.maybe_execute(code, account=acc, now_ts=ctx.now_ts)
 
+        session_factory = app.state.session_factory
         async with session_scope(session_factory) as s:
             repo = ExecutionRepo(s)
             await repo.add_execution(
                 symbol=code,
                 ts=res.ts,
                 action=res.action,
-                notional_usd=res.notional_usd,
+                notional_cny=res.notional_cny,
                 paper=res.paper,
                 ok=res.ok,
                 message=res.message,
@@ -204,6 +213,7 @@ async def execute(symbol: str, ctx: TradingContextIn):
                 snapshot=(res.details.get("snapshot") if isinstance(res.details, dict) else None),
                 broker_details=(res.details if isinstance(res.details, dict) else None),
             )
+
         return res
     except HTTPException:
         raise
@@ -214,18 +224,21 @@ async def execute(symbol: str, ctx: TradingContextIn):
 @app.get("/trade_history/{symbol}", tags=["trading"])
 async def get_trade_history(symbol: str, limit: int = Query(50, ge=1, le=200)):
     code = normalize_cn_symbol(symbol)
-    recs = await trade_history.list_records(code, limit=limit)
+    trade_history_db: TradeHistoryDB = app.state.trade_history_db
+    recs = await trade_history_db.list_records(code, limit=limit)
     return {"symbol": code, "count": len(recs), "records": recs}
+
 
 @app.post("/trade_history/{symbol}/clear", tags=["trading"])
 async def clear_trade_history(symbol: str):
     code = normalize_cn_symbol(symbol)
-    n = await trade_history.clear(code)
+    trade_history_db: TradeHistoryDB = app.state.trade_history_db
+    n = await trade_history_db.clear(code)
     return {"ok": True, "symbol": code, "deleted": n}
 
 
 # -------------------------
-# Stock bars endpoint (unchanged)
+# Stock bars endpoint
 # -------------------------
 @app.get("/api/stock/bars", tags=["trading"])
 async def api_stock_bars(
@@ -253,7 +266,7 @@ async def api_stock_bars(
 
 
 # -------------------------
-# Backtest UI + API (unchanged)
+# Backtest UI + API
 # -------------------------
 @app.get("/backtest", response_class=HTMLResponse, tags=["backtest"])
 async def backtest_page():
@@ -326,7 +339,7 @@ async def api_backtest_report(
 
 
 # -------------------------
-# LLM passthrough endpoint (unchanged)
+# LLM passthrough endpoint
 # -------------------------
 @app.post("/api/llm/chat", response_model=LLMChatResponse, tags=["llm"])
 async def api_llm_chat(req: LLMChatRequest):
@@ -337,6 +350,8 @@ async def api_llm_chat(req: LLMChatRequest):
     - Else -> plain text in output_text
     """
     try:
+        llm: OpenAICompatLLM = app.state.llm
+
         system_prompt = req.system or "You are a helpful trading assistant."
 
         msgs: list[ChatMessage] = [ChatMessage(**m.model_dump()) for m in req.messages]

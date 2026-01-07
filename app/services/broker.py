@@ -16,7 +16,7 @@ class PaperBroker:
             ts=datetime.now(timezone.utc),
             symbol=req.symbol,
             action=req.action,
-            notional_usd=req.notional_usd,
+            notional_cny=req.notional_cny,
             paper=True,
             details={"fill": "simulated"}
         )

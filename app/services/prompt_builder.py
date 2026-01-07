@@ -5,7 +5,9 @@ import json
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
+from app.logging_config import logger
 from app.models import MarketSnapshot, AccountState, ExecutionConstraints
 
 SYSTEM_PROMPT = """You are a cautious quantitative trading assistant for China A-share intraday trading.
@@ -33,7 +35,7 @@ Do NOT assume any news, fundamentals, or external data.
 - If recent trades show consistent losses under similar patterns, reduce aggressiveness:
   - Prefer HOLD more often
   - Lower confidence
-  - Use smaller suggested_notional_usd
+  - Use smaller suggested_notional_cny
 - If trade history is missing, short, or inconsistent, do NOT overfit; stay conservative.
 
 === Output schema (STRICT) ===
@@ -42,7 +44,7 @@ Return a JSON object with EXACTLY these keys:
 - horizon_minutes: must be 30
 - confidence: number between 0 and 1
 - expected_direction: one of ["UP", "DOWN", "FLAT"]
-- suggested_notional_usd: number >= 0 (required)
+- suggested_notional_cny: number >= 0 (required)
 - reason: short, specific, data-grounded explanation referencing recent bars/volume/volatility and (if helpful) recent trade outcomes
 - risk_notes: short, include at least ONE concrete risk
 
@@ -54,9 +56,9 @@ You MUST NOT output any other fields.
    - cannot BUY if available cash is insufficient
    - cannot SELL more shares than current position
 
-2) BUY means: buy using suggested_notional_usd as a sizing hint.
-3) SELL means: sell using suggested_notional_usd as a sizing hint.
-4) HOLD means: suggested_notional_usd can be 0.
+2) BUY means: buy using suggested_notional_cny as a sizing hint.
+3) SELL means: sell using suggested_notional_cny as a sizing hint.
+4) HOLD means: suggested_notional_cny can be 0.
 5) If max_trades_left_today <= 0 → MUST return HOLD.
 6) If confidence < min_confidence_to_trade → MUST return HOLD.
 
@@ -68,26 +70,16 @@ You MUST NOT output any other fields.
 
 Return ONLY the JSON object.
 """
- 
+
+_SH_TZ = ZoneInfo("Asia/Shanghai")
+
 def _fmt_ts_shanghai(dt: datetime) -> str:
-    """
-    Your AkShare provider currently uses tz=UTC on bars.
-    We keep the string format stable; timezone label is carried separately in payload.
-    """
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    # Keep as "YYYY-MM-DD HH:MM:SS"
-    return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return dt.astimezone(_SH_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _bars_to_5m_ohlcv(snapshot: MarketSnapshot) -> List[Dict[str, Any]]:
-    """
-    Convert MarketSnapshot.recent_bars -> prompt bars_5m array.
-
-    NOTE:
-    - Your Bar model currently includes: ts, open, high, low, close, volume
-    - Some sources include amount; if you later add it, we will include it automatically.
-    """
     bars = []
     for b in (snapshot.recent_bars or []):
         item: Dict[str, Any] = {
@@ -98,16 +90,23 @@ def _bars_to_5m_ohlcv(snapshot: MarketSnapshot) -> List[Dict[str, Any]]:
             "close": float(b.close),
             "volume": float(b.volume),
         }
-        # Optional amount support if present on Bar
+
         amt = getattr(b, "amount", None)
         if amt is not None:
             try:
                 item["amount"] = float(amt)
             except Exception:
                 pass
+
+        vwap = getattr(b, "vwap", None)
+        if vwap is not None:
+            try:
+                item["vwap"] = float(vwap)
+            except Exception:
+                pass
+
         bars.append(item)
 
-    # Ensure ascending order
     bars.sort(key=lambda x: x["ts"])
     return bars
 
@@ -159,7 +158,8 @@ def build_user_prompt(
         "decision_policy": {
             "goal": decision_goal,
             "trade_style": trade_style,
-            "rule": "If you expect price to rise in the next 30 minutes → SELL (size via suggested_notional_usd). If you expect price to fall → BUY (size via suggested_notional_usd). Otherwise HOLD.",
+            # "rule": "If you expect price to rise in the next 30 minutes → SELL (size via suggested_notional_cny). If you expect price to fall → BUY (size via suggested_notional_cny). Otherwise HOLD.",
+            "rule": "If you expect price to rise in the next 30 minutes → BUY (size via suggested_notional_cny). If you expect price to fall → SELL (size via suggested_notional_cny). Otherwise HOLD.",
             "position_management": "Scale in/out conservatively; avoid aggressive flips.",
         },
         "trade_history": {
@@ -176,7 +176,7 @@ def build_user_prompt(
         "important_rules": [
             "Use the LAST close price as current reference price",
             "If confidence < min_confidence_to_trade OR max_trades_left_today <= 0 -> HOLD",
-            "Use trade_history as feedback to adjust confidence and suggested_notional_usd conservatively",
+            "Use trade_history as feedback to adjust confidence and suggested_notional_cny conservatively",
         ],
     }
 
@@ -189,4 +189,12 @@ def build_user_prompt(
         return obj
 
     payload = _drop_none(payload)
+
+    logger.warning(
+        "PROMPT DATA | bars=%s trade_history=%s account_cash=%.2f",
+        len(snapshot.recent_bars or []),
+        len(trade_history_records or []),
+        float(account.cash_cny),
+    )
+
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
