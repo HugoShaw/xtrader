@@ -1,8 +1,8 @@
 # app/models.py
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from dataclasses import dataclass
 from typing import Literal, Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 class Bar(BaseModel):
     ts: datetime
@@ -16,6 +16,11 @@ class Bar(BaseModel):
     amount: Optional[float] = None   # 成交额
     vwap: Optional[float] = None     # 均价 (avg price)
 
+    @field_validator("ts")
+    @classmethod
+    def _tz_aware(cls, v: datetime) -> datetime:
+        return v if v.tzinfo is not None else v.replace(tzinfo=timezone.utc)
+
 class MarketSnapshot(BaseModel):
     symbol: str
     ts: datetime  # snapshot time (UTC recommended)
@@ -26,7 +31,7 @@ class MarketSnapshot(BaseModel):
     day_volume: Optional[float] = None
     vwap: Optional[float] = None
     prev_close: Optional[float] = None
-    recent_bars: List[Bar] = Field(default_factory=list)  # e.g., last N 1-min bars
+    recent_bars: List[Bar] = Field(default_factory=list)
     extra: Dict[str, Any] = Field(default_factory=dict)
 
 class TradeSignal(BaseModel):
@@ -34,22 +39,24 @@ class TradeSignal(BaseModel):
     horizon_minutes: int = 30
     confidence: float = Field(ge=0.0, le=1.0)
     reason: str
-    suggested_notional_cny: float
+    suggested_lots: int = Field(ge=0, le=1000)
     expected_direction: Literal["UP", "DOWN", "FLAT"]
-    risk_notes: str = ""   # <-- make required + safe default
+    risk_notes: str = ""
 
 class TradeRequest(BaseModel):
     symbol: str
-    notional_cny: float
     action: Literal["BUY", "SELL"]
+    shares: int = Field(gt=0)          # ✅ final order size in shares
+    lot_size: int = Field(gt=0)        # ✅ keep for audit/debug
 
 class TradeResult(BaseModel):
     ok: bool
     message: str
     ts: datetime
     symbol: str
-    action: str
-    notional_cny: float
+    action: Literal["BUY", "SELL", "HOLD"]
+    shares: int = 0                   # ✅ executed/requested shares (0 for HOLD/blocked)
+    lots: int = 0                     # ✅ executed/requested lots
     paper: bool = True
     details: Dict[str, Any] = Field(default_factory=dict)
 

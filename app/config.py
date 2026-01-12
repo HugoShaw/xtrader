@@ -34,9 +34,21 @@ class Settings(BaseSettings):
     trade_cooldown_seconds: int = Field(default=1200, alias="TRADE_COOLDOWN_SECONDS")
     max_position_value_cny: float = Field(default=100000.0, alias="MAX_POSITION_VALUE_CNY")
     fixed_trade_amount_cny: float = Field(default=5000.0, alias="FIXED_TRADE_AMOUNT_CNY")
+    fixed_slots: float = Field(default=1, alias="FIXED_SLOTS")
     min_confidence: float = Field(default=0.65, alias="MIN_CONFIDENCE")
+
+    buy_fee_rate: float = Field(default=0.00015, alias="BUY_FEE_RATE")
+    sell_fee_rate: float = Field(default=0.0025, alias="SELL_FEE_RATE")
 
     # Database
     database_url: str = Field(default="sqlite+aiosqlite:///./xtrader.db", alias="DATABASE_URL") 
+
+    cache_backend: str = Field(default="memory", alias="CACHE_BACKEND")  # memory | redis
+    cache_redis_url: str = Field(default="redis://localhost:6379/0", alias="CACHE_REDIS_URL")
+
+    # recommended TTLs for your market data
+    cache_spot_ttl_sec: float = Field(default=3.0, alias="CACHE_SPOT_TTL_SEC")
+    cache_orderbook_ttl_sec: float = Field(default=1.0, alias="CACHE_ORDERBOOK_TTL_SEC")
+    cache_bars_ttl_sec: float = Field(default=2.0, alias="CACHE_BARS_TTL_SEC")
 
 settings = Settings()

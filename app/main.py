@@ -12,6 +12,8 @@ from fastapi.concurrency import run_in_threadpool
 
 from app.config import settings
 
+from app.services.cache import build_cache
+
 from app.storage.db import make_engine, make_session_factory, init_db, session_scope
 from app.storage.repo import ExecutionRepo
 
@@ -24,6 +26,7 @@ from app.services.trade_history_db import TradeHistoryDB
 
 from app.services.backtest import BacktestParams, run_backtest, build_report_html
 from app.services.stock_api import fetch_cn_minute_bars, bars_to_payload
+
 
 from app.models_llm import LLMChatRequest, LLMChatResponse, ChatMessage
 from app.models import TradingContextIn, AccountState
@@ -48,6 +51,10 @@ async def lifespan(app: FastAPI):
     # 2) Init DB schema + SQLite pragmas
     await init_db(db_engine)
 
+    # build cache once (single worker)
+    cache = build_cache(backend=settings.cache_backend, redis_url=settings.cache_redis_url)
+    app.state.cache = cache
+
     # 3) Save to app.state
     app.state.db_engine = db_engine
     app.state.session_factory = session_factory
@@ -57,7 +64,13 @@ async def lifespan(app: FastAPI):
     app.state.trade_history_db = trade_history_db
 
     # 5) Core services
-    market = build_market_provider(settings.market_provider)
+    market = build_market_provider(
+        settings.market_provider,          # whatever you use, e.g. "akshare"
+        cache=app.state.cache,             # Memory now, Redis later
+        # spot_ttl_sec=settings.cache_spot_ttl_sec,
+        orderbook_ttl_sec=settings.cache_orderbook_ttl_sec,
+        bars_ttl_sec=settings.cache_bars_ttl_sec,
+    )
 
     llm = OpenAICompatLLM(
         base_url=settings.llm_base_url,
@@ -83,14 +96,19 @@ async def lifespan(app: FastAPI):
         llm=llm,
         risk=risk,
         broker=broker,
-        fixed_amount_cny=settings.fixed_trade_amount_cny,
+        fixed_lots=settings.fixed_slots,
         trade_history_db=trade_history_db, 
         timezone_name="Asia/Shanghai",
         lot_size=100,
         max_order_shares=1000,
         fees_bps_est=5,
         slippage_bps_est=5,
-        market_kwargs={"min_period": "5", "min_lookback_minutes": 300, "include_orderbook": True},
+        market_kwargs={
+            "min_period": "5",
+            "min_lookback_minutes": 120,     # usually enough for intraday
+            "include_orderbook": False,      # orderbook is expensive; enable only when needed
+            "include_bars": True,
+        },
     ) 
     app.state.trading_engine = trading_engine
 
@@ -99,6 +117,7 @@ async def lifespan(app: FastAPI):
     finally:
         # -------- shutdown --------
         print("🛑 xtrader shutting down...")
+        await cache.close()
         await db_engine.dispose()
 
 
@@ -177,6 +196,15 @@ async def signal(symbol: str, ctx: TradingContextIn):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"signal_error: {e}")
 
+@app.get("/signal-ui", response_class=HTMLResponse, tags=["ui"])
+async def signal_ui_page():
+    html_path = STATIC_DIR / "signal.html"
+    if not html_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="signal.html not found. Create /static/signal.html at repo root.",
+        )
+    return html_path.read_text(encoding="utf-8")
 
 @app.post("/execute/{symbol}", tags=["trading"])
 async def execute(symbol: str, ctx: TradingContextIn):

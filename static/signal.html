@@ -1,0 +1,761 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>xtrader - Signal UI</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    body { margin: 0; background: #0b0f19; color: #e8eefc; }
+    header { padding: 18px 20px; border-bottom: 1px solid rgba(255,255,255,.08); }
+    header h1 { margin: 0; font-size: 18px; font-weight: 650; }
+    header p { margin: 6px 0 0; opacity: .8; font-size: 13px; }
+
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 18px 20px 40px; display: grid; gap: 14px; }
+    .grid { display: grid; grid-template-columns: 380px 1fr; gap: 14px; align-items: start; }
+    @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+
+    .card { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); border-radius: 14px; overflow: hidden; }
+    .card h2 { margin: 0; padding: 14px 14px 10px; font-size: 14px; font-weight: 650; border-bottom: 1px solid rgba(255,255,255,.08); }
+    .card .content { padding: 14px; display: grid; gap: 12px; }
+
+    label { display: grid; gap: 6px; font-size: 12px; opacity: .9; }
+    input, select, textarea {
+      width: 100%;
+      box-sizing: border-box;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,.12);
+      background: rgba(0,0,0,.35);
+      color: #e8eefc;
+      padding: 10px 10px;
+      outline: none;
+    }
+    input:focus, textarea:focus { border-color: rgba(110,168,254,.6); }
+
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    @media (max-width: 520px) { .row { grid-template-columns: 1fr; } }
+
+    .btns { display: flex; gap: 10px; flex-wrap: wrap; }
+    button {
+      border: 1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.06);
+      color: #e8eefc;
+      padding: 10px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: 650;
+    }
+    button.primary { background: rgba(110,168,254,.25); border-color: rgba(110,168,254,.45); }
+    button.danger { background: rgba(255, 107, 107, .18); border-color: rgba(255, 107, 107, .45); }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+
+    .status {
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,.10);
+      background: rgba(0,0,0,.25);
+      font-size: 12px;
+      display: grid;
+      gap: 6px;
+    }
+
+    .muted { opacity: .75; font-size: 12px; }
+    .pill { display:inline-block; padding: 2px 8px; border-radius: 999px; border: 1px solid rgba(255,255,255,.14); font-size: 11px; opacity: .95; }
+    .pill.ok { border-color: rgba(64, 192, 128, .55); }
+    .pill.bad { border-color: rgba(255, 107, 107, .55); }
+    .pill.info { border-color: rgba(110,168,254,.55); }
+
+    /* Pretty response renderer */
+    .respWrap { padding: 14px; display: grid; gap: 12px; }
+    .respTop { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+    .respTitle { display: flex; align-items: center; gap: 10px; }
+    .respTitle strong { font-size: 14px; }
+    .kvs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    @media (max-width: 900px) { .kvs { grid-template-columns: 1fr; } }
+
+    .kv {
+      border: 1px solid rgba(255,255,255,.10);
+      background: rgba(0,0,0,.25);
+      border-radius: 12px;
+      padding: 10px 12px;
+      display: grid;
+      gap: 6px;
+    }
+    .kv .k { font-size: 11px; opacity: .75; }
+    .kv .v { font-size: 13px; font-weight: 650; }
+    .kv .s { font-size: 12px; opacity: .85; line-height: 1.35; white-space: pre-wrap; }
+
+    details {
+      border: 1px solid rgba(255,255,255,.10);
+      border-radius: 12px;
+      background: rgba(0,0,0,.25);
+      overflow: hidden;
+    }
+    details summary {
+      cursor: pointer;
+      padding: 10px 12px;
+      font-weight: 650;
+      font-size: 12px;
+      border-bottom: 1px solid rgba(255,255,255,.08);
+      list-style: none;
+    }
+    details summary::-webkit-details-marker { display: none; }
+
+    pre {
+      margin: 0;
+      padding: 12px;
+      background: rgba(0,0,0,.15);
+      overflow: auto;
+      max-height: 520px;
+      font-size: 12px;
+      line-height: 1.35;
+      border-bottom-left-radius: 12px;
+      border-bottom-right-radius: 12px;
+    }
+
+    .historyList { padding: 10px 14px 14px; display: grid; gap: 10px; }
+    .histItem {
+      border: 1px solid rgba(255,255,255,.10);
+      background: rgba(0,0,0,.25);
+      border-radius: 12px;
+      padding: 10px 12px;
+      display: grid;
+      gap: 6px;
+    }
+    .histTop { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap: wrap; }
+    .histMeta { font-size: 12px; opacity: .9; }
+    .histMeta code { opacity: .9; }
+    .histSmall { font-size: 12px; opacity: .8; white-space: pre-wrap; }
+    .copyBtn {
+      font-size: 12px;
+      padding: 8px 10px;
+      border-radius: 10px;
+    }
+  </style>
+</head>
+<body>
+<header>
+  <h1>xtrader /signal UI</h1>
+  <p>
+    Send a symbol + account state to
+    <span class="pill info">POST /signal/{symbol}</span>
+    manually or on a schedule. Timestamps shown in
+    <span class="pill info">Asia/Shanghai</span>.
+  </p>
+</header>
+
+<div class="wrap">
+  <div class="grid">
+    <!-- Left: Inputs -->
+    <div class="card">
+      <h2>Request Settings</h2>
+      <div class="content">
+        <label>
+          Stock Symbol (6 digits)
+          <input id="symbol" placeholder="e.g. 600519" />
+        </label>
+
+        <div class="row">
+          <label>
+            Cash (CNY)
+            <input id="cash" type="number" step="0.01" placeholder="e.g. 100000" />
+          </label>
+          <label>
+            Position Shares
+            <input id="pos" type="number" step="1" placeholder="e.g. 0" />
+          </label>
+        </div>
+
+        <div class="row">
+          <label>
+            Avg Cost (CNY)
+            <input id="avgCost" type="number" step="0.01" placeholder="e.g. 12.34" />
+          </label>
+          <label>
+            Unrealized PnL (CNY)
+            <input id="upl" type="number" step="0.01" placeholder="e.g. 0" />
+          </label>
+        </div>
+
+        <div class="row">
+          <label>
+            now_ts (optional)
+            <input id="nowTs" placeholder="ISO8601 or leave blank (auto uses Shanghai time)" />
+          </label>
+          <label>
+            Frequency (seconds)
+            <input id="freqSec" type="number" step="1" min="1" placeholder="e.g. 30" />
+          </label>
+        </div>
+
+        <div class="btns">
+          <button id="btnOnce" class="primary">Call Once</button>
+          <button id="btnStart" class="primary">Start Auto</button>
+          <button id="btnStop" class="danger" disabled>Stop Auto</button>
+          <button id="btnClear" title="Clear output only">Clear Output</button>
+        </div>
+
+        <div class="status" id="statusBox">
+          <div>Status: <span id="runState" class="pill">idle</span></div>
+          <div>Last call (Shanghai): <span id="lastCall" class="muted">—</span></div>
+          <div>Last result: <span id="lastResult" class="muted">—</span></div>
+          <div class="muted">Tip: inputs are saved locally in your browser.</div>
+        </div>
+
+        <div class="muted">
+          If your backend expects more fields in <code>TradingContextIn</code>, add them in the JS payload builder.
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Output -->
+    <div class="card">
+      <h2>Response</h2>
+      <div id="resp" class="respWrap">
+        <div class="muted">(no response yet)</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>History (latest 30)</h2>
+    <div id="history" class="historyList">(empty)</div>
+  </div>
+</div>
+
+<script>
+  // -----------------------------
+  // Helpers
+  // -----------------------------
+  const $ = (id) => document.getElementById(id);
+
+    const TZ = "Asia/Shanghai";
+
+    function shanghaiNowYmdHms() {
+    // returns: "YYYY-MM-DD HH:MM:SS" in Asia/Shanghai
+    const dt = new Date();
+    const parts = new Intl.DateTimeFormat("sv-SE", {
+        timeZone: TZ,
+        year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", second: "2-digit",
+        hour12: false
+    }).formatToParts(dt);
+
+    const get = (type) => parts.find(p => p.type === type)?.value ?? "";
+    return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")}`;
+    }
+
+    // Best-effort converter:
+    // - if user enters "2026-01-09T17:12:11+08:00" -> "2026-01-09 17:12:11"
+    // - if already "YYYY-MM-DD HH:MM:SS" -> keep
+    // - if empty -> ""
+    function normalizeNowTs(input) {
+    const s = String(input || "").trim();
+    if (!s) return "";
+
+    // already correct format?
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) return s;
+
+    // ISO-like -> try to parse and then format in Shanghai
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) {
+        // format that Date in Asia/Shanghai as required
+        const parts = new Intl.DateTimeFormat("sv-SE", {
+        timeZone: TZ,
+        year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", second: "2-digit",
+        hour12: false
+        }).formatToParts(d);
+
+        const get = (type) => parts.find(p => p.type === type)?.value ?? "";
+        return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")}`;
+    }
+
+    // otherwise, return as-is (server may reject; but we won't silently change unknown formats)
+    return s;
+    }
+
+  function safeNumber(v, fallback=null) {
+    if (v === undefined || v === null) return fallback;
+    const s = String(v).trim();
+    if (s === "") return fallback;
+    const n = Number(s);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  function normalizeSymbol(sym) {
+    const s = String(sym || "").trim();
+    const head = s.split(".", 1)[0];
+    return head;
+  }
+
+  function setRunState(text, kind=null) {
+    const el = $("runState");
+    el.textContent = text;
+    el.className = "pill";
+    if (kind === "ok") el.classList.add("ok");
+    if (kind === "bad") el.classList.add("bad");
+    if (!kind) el.classList.add("info");
+  }
+
+  function setStatus(lastCall, lastResult) {
+    $("lastCall").textContent = lastCall || "—";
+    $("lastResult").textContent = lastResult || "—";
+  }
+
+  function pretty(obj) {
+    return JSON.stringify(obj, null, 2);
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  function pick(obj, keys) {
+    for (const k of keys) {
+      if (obj && Object.prototype.hasOwnProperty.call(obj, k) && obj[k] !== undefined && obj[k] !== null) {
+        return obj[k];
+      }
+    }
+    return undefined;
+  }
+
+  function normalizeAction(a) {
+    const s = String(a || "").toUpperCase();
+    if (["BUY","SELL","HOLD"].includes(s)) return s;
+    return s || "—";
+  }
+
+  function actionPill(action) {
+    const a = normalizeAction(action);
+    let cls = "pill info";
+    if (a === "BUY") cls = "pill ok";
+    if (a === "SELL") cls = "pill bad";
+    return `<span class="${cls}">${escapeHtml(a)}</span>`;
+  }
+
+  function fmtNum(n, digits=2) {
+    const x = Number(n);
+    if (!Number.isFinite(x)) return "—";
+    return x.toFixed(digits);
+  }
+
+  function fmtPct01(p) {
+    // if p in [0,1], show percentage
+    const x = Number(p);
+    if (!Number.isFinite(x)) return "—";
+    if (x >= 0 && x <= 1) return `${(x * 100).toFixed(1)}%`;
+    return `${x.toFixed(2)}`;
+  }
+
+  async function copyToClipboard(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // fallback
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        return true;
+      } catch {
+        document.body.removeChild(ta);
+        return false;
+      }
+    }
+  }
+
+  // -----------------------------
+  // Persistence
+  // -----------------------------
+  const LS_KEY = "xtrader_signal_ui_v2";
+  function saveForm() {
+    const data = {
+      symbol: $("symbol").value,
+      cash: $("cash").value,
+      pos: $("pos").value,
+      avgCost: $("avgCost").value,
+      upl: $("upl").value,
+      nowTs: $("nowTs").value,
+      freqSec: $("freqSec").value,
+    };
+    localStorage.setItem(LS_KEY, JSON.stringify(data));
+  }
+
+  function loadForm() {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return;
+    try {
+      const d = JSON.parse(raw);
+      $("symbol").value = d.symbol ?? "";
+      $("cash").value = d.cash ?? "";
+      $("pos").value = d.pos ?? "";
+      $("avgCost").value = d.avgCost ?? "";
+      $("upl").value = d.upl ?? "";
+      $("nowTs").value = d.nowTs ?? "";
+      $("freqSec").value = d.freqSec ?? "";
+    } catch {}
+  }
+
+  // -----------------------------
+  // Payload builder
+  // -----------------------------
+  function buildPayload() {
+    const account_state = {
+      cash_cny: safeNumber($("cash").value, 0),
+      position_shares: safeNumber($("pos").value, 0),
+      avg_cost_cny: safeNumber($("avgCost").value, 0),
+      unrealized_pnl_cny: safeNumber($("upl").value, 0),
+    };
+
+    const now_ts_user = normalizeNowTs($("nowTs").value);
+    const payload = { account_state };
+
+    // If user didn't provide now_ts, generate Shanghai "YYYY-MM-DD HH:MM:SS"
+    payload.now_ts = now_ts_user ? now_ts_user : shanghaiNowYmdHms();
+
+    return payload;
+  }
+
+  // -----------------------------
+  // Pretty response rendering
+  // -----------------------------
+  function renderResponse(data, meta) {
+    // Try to detect common shapes:
+    // - direct signal: {action, confidence, reason, ...}
+    // - nested: {signal: {...}} or {result: {...}}
+    // We'll surface the best guess + always show raw JSON collapsible.
+
+    const root = data ?? {};
+    const sig = pick(root, ["signal", "result", "data"]) || root;
+
+    const action = pick(sig, ["action", "side", "decision"]);
+    const confidence = pick(sig, ["confidence", "prob", "p", "score"]);
+    const notional = pick(sig, ["notional_cny", "notional", "amount_cny", "amount"]);
+    const price = pick(sig, ["price", "entry_price", "suggested_price", "limit_price"]);
+    const ts = pick(sig, ["ts", "timestamp", "time", "now_ts"]) || meta?.startedShanghai;
+
+    const reason =
+      pick(sig, ["reason", "rationale", "explanation", "analysis"]) ??
+      pick(root, ["reason", "message", "detail"]);
+
+    const riskNotes = pick(sig, ["risk_notes", "risk", "warnings"]);
+
+    const titleSymbol = meta?.symbol ? `<code>${escapeHtml(meta.symbol)}</code>` : `<code>—</code>`;
+    const titleAction = actionPill(action);
+
+    const confHtml = confidence === undefined ? "—" : fmtPct01(confidence);
+    const notionalHtml = notional === undefined ? "—" : `¥${fmtNum(notional, 2)}`;
+    const priceHtml = price === undefined ? "—" : fmtNum(price, 4);
+
+    const reasonHtml = reason ? escapeHtml(reason) : "—";
+    const riskHtml = riskNotes ? escapeHtml(typeof riskNotes === "string" ? riskNotes : pretty(riskNotes)) : "—";
+
+    const rawJson = pretty(root);
+
+    const html = `
+      <div class="respTop">
+        <div class="respTitle">
+          <strong>Signal</strong>
+          <span class="pill info">${titleSymbol}</span>
+          ${titleAction}
+        </div>
+        <button class="copyBtn" id="copyRawBtn">Copy Raw JSON</button>
+      </div>
+
+      <div class="kvs">
+        <div class="kv">
+          <div class="k">Confidence</div>
+          <div class="v">${escapeHtml(confHtml)}</div>
+          <div class="s muted">If in 0..1, shown as percent.</div>
+        </div>
+        <div class="kv">
+          <div class="k">Notional (CNY)</div>
+          <div class="v">${escapeHtml(notionalHtml)}</div>
+          <div class="s muted">Shown if the API returns notional/amount fields.</div>
+        </div>
+        <div class="kv">
+          <div class="k">Suggested Price</div>
+          <div class="v">${escapeHtml(priceHtml)}</div>
+          <div class="s muted">Best-effort guess from response keys.</div>
+        </div>
+        <div class="kv">
+          <div class="k">Timestamp</div>
+          <div class="v">${escapeHtml(String(ts || "—"))}</div>
+          <div class="s muted">UI uses Asia/Shanghai; API may return its own ts.</div>
+        </div>
+      </div>
+
+      <div class="kv">
+        <div class="k">Reason</div>
+        <div class="s">${reasonHtml}</div>
+      </div>
+
+      <details>
+        <summary>Risk / Warnings</summary>
+        <pre>${escapeHtml(riskHtml)}</pre>
+      </details>
+
+      <details open>
+        <summary>Raw JSON</summary>
+        <pre>${escapeHtml(rawJson)}</pre>
+      </details>
+    `;
+
+    $("resp").innerHTML = html;
+
+    const btn = $("copyRawBtn");
+    if (btn) {
+      btn.onclick = async () => {
+        const ok = await copyToClipboard(rawJson);
+        btn.textContent = ok ? "Copied!" : "Copy failed";
+        setTimeout(() => (btn.textContent = "Copy Raw JSON"), 1200);
+      };
+    }
+  }
+
+  function renderError(errText, raw, meta) {
+    const html = `
+      <div class="respTop">
+        <div class="respTitle">
+          <strong>Request Failed</strong>
+          <span class="pill info"><code>${escapeHtml(meta?.symbol || "—")}</code></span>
+          <span class="pill bad">ERROR</span>
+        </div>
+        <button class="copyBtn" id="copyErrBtn">Copy</button>
+      </div>
+      <div class="kv">
+        <div class="k">Error</div>
+        <div class="s">${escapeHtml(errText)}</div>
+      </div>
+      <details open>
+        <summary>Raw</summary>
+        <pre>${escapeHtml(raw || "")}</pre>
+      </details>
+    `;
+    $("resp").innerHTML = html;
+
+    const btn = $("copyErrBtn");
+    if (btn) {
+      btn.onclick = async () => {
+        const ok = await copyToClipboard(`${errText}\n\n${raw || ""}`);
+        btn.textContent = ok ? "Copied!" : "Copy failed";
+        setTimeout(() => (btn.textContent = "Copy"), 1200);
+      };
+    }
+  }
+
+  // -----------------------------
+  // API call (no-overlap auto mode)
+  // -----------------------------
+  let timer = null;
+  let running = false; // prevent overlapping calls
+  let history = [];
+
+  function pushHistory(entry) {
+    history.unshift(entry);
+    history = history.slice(0, 30);
+
+    const container = $("history");
+    if (!history.length) {
+      container.textContent = "(empty)";
+      return;
+    }
+
+    container.innerHTML = history.map((h, idx) => {
+      const pill = h.ok ? `<span class="pill ok">OK</span>` : `<span class="pill bad">FAIL</span>`;
+      const sym = `<code>${escapeHtml(h.symbol || "—")}</code>`;
+      const action = h.action ? actionPill(h.action) : "";
+      const msg = h.msg ? escapeHtml(h.msg) : "";
+      return `
+        <div class="histItem">
+          <div class="histTop">
+            <div class="histMeta">
+              ${pill} ${sym} ${action}
+              <span class="muted">•</span>
+              <span class="muted">${escapeHtml(h.tsShanghai || "—")}</span>
+            </div>
+            <button class="copyBtn" data-idx="${idx}">Copy</button>
+          </div>
+          <div class="histSmall">${msg}</div>
+        </div>
+      `;
+    }).join("");
+
+    // wire copy buttons
+    container.querySelectorAll("button.copyBtn[data-idx]").forEach(btn => {
+      btn.onclick = async () => {
+        const idx = Number(btn.getAttribute("data-idx"));
+        const item = history[idx];
+        const payload = pretty(item);
+        const ok = await copyToClipboard(payload);
+        btn.textContent = ok ? "Copied!" : "Copy failed";
+        setTimeout(() => (btn.textContent = "Copy"), 1200);
+      };
+    });
+  }
+
+  async function callSignalOnce() {
+    if (running) return; // avoid overlap
+    running = true;
+
+    saveForm();
+    const symbol = normalizeSymbol($("symbol").value);
+
+    if (!symbol) {
+      renderError("symbol is required (6 digits).", "", { symbol: "" });
+      setRunState("idle", "bad");
+      running = false;
+      return;
+    }
+
+    const payload = buildPayload();
+    const url = `/signal/${encodeURIComponent(symbol)}`;
+
+    const startedShanghai = shanghaiNowYmdHms();
+
+    $("lastCall").textContent = startedShanghai;
+    setRunState(timer ? "running" : "calling...");
+
+    try {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload),
+      });
+
+      const rawText = await resp.text();
+      let data;
+      try { data = JSON.parse(rawText); } catch { data = { raw: rawText }; }
+
+      if (!resp.ok) {
+        const msg = `HTTP ${resp.status} ${resp.statusText}`;
+        setRunState(timer ? "running" : "idle", "bad");
+        setStatus(startedShanghai, msg);
+
+        renderError(msg, pretty(data), { symbol, startedShanghai });
+        pushHistory({
+          tsShanghai: startedShanghai,
+          ok: false,
+          symbol,
+          msg: `${msg}\n${pretty(data)}`.slice(0, 1200),
+          status: resp.status,
+          response: data
+        });
+        running = false;
+        return;
+      }
+
+      // Success
+      setRunState(timer ? "running" : "idle", "ok");
+      setStatus(startedShanghai, "ok");
+
+      renderResponse(data, { symbol, startedShanghai });
+
+      const action = pick(data, ["action"]) || pick(data?.signal, ["action"]) || pick(data?.result, ["action"]);
+      const confidence = pick(data, ["confidence"]) || pick(data?.signal, ["confidence"]) || pick(data?.result, ["confidence"]);
+      const short = [
+        `action=${normalizeAction(action)}`,
+        confidence !== undefined ? `confidence=${fmtPct01(confidence)}` : null
+      ].filter(Boolean).join(" | ");
+
+      pushHistory({
+        tsShanghai: startedShanghai,
+        ok: true,
+        symbol,
+        action: normalizeAction(action),
+        msg: short || "(ok)",
+        response: data
+      });
+
+    } catch (e) {
+      const msg = `FETCH_ERROR: ${e}`;
+      setRunState(timer ? "running" : "idle", "bad");
+      setStatus(startedShanghai, msg);
+
+      renderError(msg, "", { symbol, startedShanghai });
+      pushHistory({
+        tsShanghai: startedShanghai,
+        ok: false,
+        symbol,
+        msg,
+        error: String(e)
+      });
+    } finally {
+      running = false;
+    }
+  }
+
+  function startAuto() {
+    saveForm();
+
+    const freq = safeNumber($("freqSec").value, null);
+    if (!freq || freq < 1) {
+      renderError("frequency must be >= 1 second.", "", { symbol: normalizeSymbol($("symbol").value) });
+      setRunState("idle", "bad");
+      return;
+    }
+
+    if (timer) clearInterval(timer);
+
+    $("btnStart").disabled = true;
+    $("btnStop").disabled = false;
+    setRunState("running");
+
+    // Call immediately, then schedule (no-overlap guard will skip if still running)
+    callSignalOnce();
+    timer = setInterval(callSignalOnce, Math.floor(freq * 1000));
+  }
+
+  function stopAuto() {
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+    $("btnStart").disabled = false;
+    $("btnStop").disabled = true;
+    setRunState("idle", "info");
+  }
+
+  function clearOutput() {
+    $("resp").innerHTML = `<div class="muted">(cleared)</div>`;
+    $("history").textContent = "(empty)";
+    history = [];
+    setStatus(null, null);
+  }
+
+  // -----------------------------
+  // Wiring
+  // -----------------------------
+  loadForm();
+  ["symbol","cash","pos","avgCost","upl","nowTs","freqSec"].forEach(id => {
+    $(id).addEventListener("input", saveForm);
+  });
+
+  $("btnOnce").addEventListener("click", callSignalOnce);
+  $("btnStart").addEventListener("click", startAuto);
+  $("btnStop").addEventListener("click", stopAuto);
+  $("btnClear").addEventListener("click", clearOutput);
+
+  // Defaults
+  if (!$("freqSec").value) $("freqSec").value = "30";
+  if (!$("cash").value) $("cash").value = "100000";
+  if (!$("pos").value) $("pos").value = "0";
+  if (!$("avgCost").value) $("avgCost").value = "0";
+  if (!$("upl").value) $("upl").value = "0";
+
+  // Show initial state as Shanghai time
+  setStatus(null, null);
+  setRunState("idle", "info");
+</script>
+</body>
+</html>

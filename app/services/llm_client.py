@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import re
 import json
 import asyncio
 import time
-from typing import Any, Dict, List, Optional, Callable, TypeVar
+from typing import Any, Dict, List, Optional, Callable, TypeVar, Type
 
 from openai import OpenAI, OpenAIError
 
@@ -11,6 +12,7 @@ from app.models import TradeSignal
 from app.logging_config import logger
 
 T = TypeVar("T")
+TModel = TypeVar("TModel")
 
 
 class OpenAICompatLLM:
@@ -115,6 +117,59 @@ class OpenAICompatLLM:
             "content_tail": tail,
         }
 
+    @staticmethod
+    def _extract_json_object(text: str) -> str:
+        """
+        Best-effort extraction of a JSON object from model output.
+        Handles:
+        - raw JSON object
+        - ```json ... ```
+        - extra preface/suffix text (rare but happens)
+        """
+        if not text:
+            raise ValueError("empty LLM content")
+
+        s = text.strip()
+
+        # Strip code fences
+        if s.startswith("```"):
+            s = re.sub(r"^```(?:json)?\s*", "", s, flags=re.IGNORECASE)
+            s = re.sub(r"\s*```$", "", s)
+
+        s = s.strip()
+
+        # Fast path: already a JSON object
+        if s.startswith("{") and s.endswith("}"):
+            return s
+
+        # Fallback: find first {...} block (balanced-ish heuristic)
+        # We locate the first '{' and last '}' and try parse.
+        i = s.find("{")
+        j = s.rfind("}")
+        if i != -1 and j != -1 and j > i:
+            return s[i : j + 1]
+
+        raise ValueError("could not locate JSON object in LLM output")
+
+
+    @staticmethod
+    def _validate_schema_keys(obj: Dict[str, Any], schema_hint: Dict[str, Any]) -> None:
+        props = schema_hint.get("properties")
+        req = schema_hint.get("required")
+
+        allowed = set(props.keys()) if isinstance(props, dict) else None
+        required = set(req) if isinstance(req, list) else set()
+
+        if allowed is not None:
+            extra = set(obj.keys()) - allowed
+            if extra:
+                raise ValueError(f"LLM returned extra keys not allowed: {sorted(extra)}")
+
+        missing = required - set(obj.keys())
+        if missing:
+            raise ValueError(f"LLM missing required keys: {sorted(missing)}")
+
+
     async def _with_retry(
         self,
         call: Callable[[], T],
@@ -189,9 +244,14 @@ class OpenAICompatLLM:
         schema_hint: Dict[str, Any],
         *,
         temperature: float = 0.1,
-    ) -> TradeSignal:
+        model_cls: Type[TModel] = TradeSignal,   # ✅ default stays TradeSignal, but reusable
+    ) -> TModel:
         """
-        Strict JSON output using OpenAI `response_format=json_object`.
+        JSON object output + local schema validation + Pydantic validation.
+
+        NOTE:
+        - response_format=json_object forces JSON, but does NOT enforce your schema.
+        - We enforce required/extra keys + Pydantic model validation here.
         """
 
         messages = [
@@ -199,7 +259,9 @@ class OpenAICompatLLM:
                 "role": "system",
                 "content": (
                     system_prompt
-                    + "\n\nYou MUST return valid JSON ONLY.\nSCHEMA:\n"
+                    + "\n\nYou MUST return valid JSON ONLY.\n"
+                    + "Return EXACTLY the schema below (no extra keys, correct types).\n"
+                    + "SCHEMA:\n"
                     + json.dumps(schema_hint, ensure_ascii=False)
                 ),
             },
@@ -207,7 +269,6 @@ class OpenAICompatLLM:
         ]
 
         async def _call():
-            # OpenAI SDK call is sync; run it in a thread to avoid blocking the event loop
             return await asyncio.to_thread(
                 self.client.chat.completions.create,
                 model=self.model,
@@ -218,24 +279,61 @@ class OpenAICompatLLM:
 
         resp = await self._with_retry(_call, op="chat_json")
 
-        content = resp.choices[0].message.content
+        content = ""
         try:
-            obj = json.loads(content)
-            logger.info(
-                f"LLM chat_json parsed ok | model={self.model} | keys={sorted(list(obj.keys()))}"
+            content = resp.choices[0].message.content or ""
+        except Exception:
+            pass
+
+        # 1) Extract JSON string
+        try:
+            json_str = self._extract_json_object(content)
+        except Exception as e:
+            snippet = (content or "")[:800].replace("\n", "\\n")
+            logger.error(f"LLM chat_json extract failed | model={self.model} | head={snippet!r}")
+            raise
+
+        # 2) Parse JSON
+        try:
+            obj = json.loads(json_str)
+            if not isinstance(obj, dict):
+                raise ValueError(f"LLM returned JSON but not an object: type={type(obj).__name__}")
+        except Exception as e:
+            snippet = (json_str or "")[:800].replace("\n", "\\n")
+            logger.error(f"LLM chat_json invalid JSON | model={self.model} | head={snippet!r}")
+            raise ValueError(f"LLM returned invalid JSON object: {snippet}") from e
+
+        # 3) Validate keys against schema_hint
+        try:
+            self._validate_schema_keys(obj, schema_hint)
+        except Exception as e:
+            logger.error(
+                "LLM chat_json schema mismatch | model=%s | err=%s | keys=%s",
+                self.model,
+                e,
+                sorted(list(obj.keys())),
             )
+            raise
 
-            allowed = set(schema_hint.get("properties", {}).keys())
-            extra = set(obj.keys()) - allowed
-            if extra:
-                raise ValueError(f"LLM returned extra keys not allowed: {sorted(extra)}")
-        except json.JSONDecodeError as e:
-            # Log parse error with snippet to debug (truncate)
-            snippet = (content or "")[:500]
-            logger.error(f"LLM chat_json invalid JSON | model={self.model} | content_head={snippet!r}")
-            raise ValueError(f"LLM returned invalid JSON: {content}") from e
+        # 4) Pydantic validation
+        try:
+            parsed = model_cls(**obj)  # type: ignore[misc]
+        except Exception as e:
+            logger.error(
+                "LLM chat_json pydantic validate failed | model=%s | err=%s | obj=%s",
+                self.model,
+                e,
+                json.dumps(obj, ensure_ascii=False)[:800],
+            )
+            raise
 
-        return TradeSignal(**obj)
+        logger.info(
+            "LLM chat_json parsed ok | model=%s | cls=%s | keys=%s",
+            self.model,
+            getattr(model_cls, "__name__", str(model_cls)),
+            sorted(list(obj.keys())),
+        )
+        return parsed
 
     # ============================================================
     # Plain text chat

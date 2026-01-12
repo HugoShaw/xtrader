@@ -29,7 +29,7 @@ SIGNAL_SCHEMA_HINT = {
         "horizon_minutes",
         "confidence",
         "reason",
-        "suggested_notional_cny",
+        "suggested_lots",
         "expected_direction",
         "risk_notes",
     ],
@@ -38,7 +38,7 @@ SIGNAL_SCHEMA_HINT = {
         "horizon_minutes": {"type": "integer", "enum": [30]},
         "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
         "reason": {"type": "string"},
-        "suggested_notional_cny": {"type": "number", "minimum": 0.0},
+        "suggested_lots": {"type": "integer", "minimum": 0},
         "expected_direction": {"type": "string", "enum": ["UP", "DOWN", "FLAT"]},
         "risk_notes": {"type": "string"},
     },
@@ -64,15 +64,14 @@ class StrategyEngine:
         risk: RiskManager,
         broker: Broker,
         *,
-        fixed_amount_cny: float,
+        fixed_lots: int = 1,  # default lots for BUY/SELL if model outputs 0
         trade_history_db: TradeHistoryDB,
         timezone_name: str = "Asia/Shanghai",
-        lot_size: int = 50, # 几手
+        lot_size: int = 100,  # shares per lot (CN-A usually 100)
         max_order_shares: Optional[int] = 10000,
         fees_bps_est: int = 5,
         slippage_bps_est: int = 5,
         trade_history_limit: int = 50,
-        # ✅ optional: passed to market.get_snapshot() (works nicely with AkShare provider knobs)
         market_kwargs: Optional[Dict[str, Any]] = None,
     ):
         self.market = market
@@ -80,9 +79,7 @@ class StrategyEngine:
         self.risk = risk
         self.broker = broker
 
-        # treat as a "cap" or "default" sizing hint; disable by setting <=0
-        self.fixed_amount_cny = float(fixed_amount_cny)
-
+        self.fixed_lots = int(fixed_lots)
         self.trade_history_db = trade_history_db
         self.trade_history_limit = int(trade_history_limit)
 
@@ -95,11 +92,11 @@ class StrategyEngine:
         self.market_kwargs = dict(market_kwargs or {})
 
         logger.info(
-            "StrategyEngine initialized | lot_size=%s max_order_shares=%s fixed_amount_cny=%s "
+            "StrategyEngine initialized | lot_size=%s max_order_shares=%s fixed_lots=%s "
             "min_confidence=%s trade_history_limit=%s market_kwargs=%s",
             self.lot_size,
             self.max_order_shares,
-            self.fixed_amount_cny,
+            self.fixed_lots,
             getattr(self.risk, "min_confidence", None),
             self.trade_history_limit,
             self.market_kwargs,
@@ -111,9 +108,9 @@ class StrategyEngine:
         *,
         account: AccountState,
         now_ts: Optional[str] = None,
-    ) -> Tuple[MarketSnapshot, TradeSignal]:
+    ) -> Tuple[MarketSnapshot, ExecutionConstraints, TradeSignal]:
         """
-        Fetch snapshot -> load recent trade history -> build prompt -> LLM JSON output.
+        Fetch snapshot -> load trade history -> build prompt -> LLM JSON output.
         """
         t0 = time.perf_counter()
         sym = symbol.strip()
@@ -127,18 +124,13 @@ class StrategyEngine:
             int(account.position_shares),
             now_ts,
             trades_left,
-        ) 
+        )
 
-        # 1) market snapshot (provider-specific kwargs are optional)
+        # 1) market snapshot
         snap_t0 = time.perf_counter()
-        end_ts = None
-        if now_ts:
-            end_ts = now_ts  # keep as string or parse to datetime once
-
-        snapshot = await self.market.get_snapshot(sym, end_ts=end_ts, **self.market_kwargs) 
+        snapshot = await self.market.get_snapshot(sym, end_ts=now_ts, **self.market_kwargs)
         snap_ms = (time.perf_counter() - snap_t0) * 1000.0
 
-        # ---- DEBUG: market snapshot visibility ----
         logger.warning(
             "DEBUG snapshot | symbol=%s last_price=%s bars_count=%s day_volume=%s vwap=%s extra_keys=%s",
             sym,
@@ -149,27 +141,7 @@ class StrategyEngine:
             list(snapshot.extra.keys()) if snapshot.extra else None,
         )
 
-        if not snapshot.recent_bars:
-            logger.error(
-                "DEBUG NO BARS | symbol=%s snapshot_ts=%s extra=%s",
-                sym,
-                snapshot.ts,
-                snapshot.extra,
-            )
-        else:
-            b0 = snapshot.recent_bars[-1]
-            logger.warning(
-                "DEBUG LAST BAR | symbol=%s ts=%s O=%.2f H=%.2f L=%.2f C=%.2f V=%.2f",
-                sym,
-                b0.ts,
-                b0.open,
-                b0.high,
-                b0.low,
-                b0.close,
-                b0.volume,
-            )
-
-        # 2) constraints
+        # 2) constraints (shared by prompt + execution)
         constraints = ExecutionConstraints(
             horizon_minutes=30,
             max_trades_left_today=trades_left,
@@ -180,7 +152,7 @@ class StrategyEngine:
             slippage_bps_est=self.slippage_bps_est,
         )
 
-        # 3) trade history (DB-backed)  ✅ FIX: needs symbol and is async
+        # 3) trade history (DB-backed)
         hist_t0 = time.perf_counter()
         trade_history_records: List[Dict[str, Any]] = await self.trade_history_db.list_records(
             symbol=sym,
@@ -200,7 +172,7 @@ class StrategyEngine:
 
         # 5) call LLM
         llm_t0 = time.perf_counter()
-        signal = await self.llm.chat_json(
+        signal: TradeSignal = await self.llm.chat_json(
             system_prompt=SYSTEM_PROMPT,
             user_prompt=prompt,
             schema_hint=SIGNAL_SCHEMA_HINT,
@@ -210,25 +182,30 @@ class StrategyEngine:
         # hard enforce horizon
         signal.horizon_minutes = 30
 
-        # sizing normalization (cap / default)
-        if self.fixed_amount_cny > 0:
-            if signal.action in ("BUY", "SELL"):
-                if float(signal.suggested_notional_cny) <= 0:
-                    signal.suggested_notional_cny = self.fixed_amount_cny
-                else:
-                    signal.suggested_notional_cny = min(float(signal.suggested_notional_cny), self.fixed_amount_cny)
-            else:
-                signal.suggested_notional_cny = max(0.0, float(signal.suggested_notional_cny))
+        # ✅ sizing normalization (lots)
+        if signal.action in ("BUY", "SELL"):
+            if int(signal.suggested_lots) <= 0 and self.fixed_lots > 0:
+                signal.suggested_lots = self.fixed_lots
+
+            # cap by max_order_shares (convert to lots)
+            if self.max_order_shares is not None and self.max_order_shares > 0:
+                max_lots_by_cap = max(int(self.max_order_shares // max(self.lot_size, 1)), 0)
+                signal.suggested_lots = min(int(signal.suggested_lots), max_lots_by_cap)
+        else:
+            signal.suggested_lots = 0
+
+        shares_hint = int(signal.suggested_lots) * int(constraints.lot_size)
 
         total_ms = (time.perf_counter() - t0) * 1000.0
         logger.info(
-            "signal_done | symbol=%s action=%s conf=%.3f dir=%s notional_cny=%.2f "
+            "signal_done | symbol=%s action=%s conf=%.3f dir=%s lots=%s shares=%s "
             "bars=%s hist=%s ms_total=%.1f ms_snap=%.1f ms_hist=%.1f ms_llm=%.1f last_price=%s",
             sym,
             signal.action,
             float(signal.confidence),
             signal.expected_direction,
-            float(signal.suggested_notional_cny),
+            int(signal.suggested_lots),
+            shares_hint,
             len(snapshot.recent_bars or []),
             len(trade_history_records),
             total_ms,
@@ -238,19 +215,18 @@ class StrategyEngine:
             getattr(snapshot, "last_price", None),
         )
 
-        return snapshot, signal
+        return snapshot, constraints, signal
 
     async def get_signal(self, symbol: str, *, account: AccountState, now_ts: Optional[str] = None) -> TradeSignal:
-        _, signal = await self._snapshot_and_signal(symbol, account=account, now_ts=now_ts)
+        _, _, signal = await self._snapshot_and_signal(symbol, account=account, now_ts=now_ts)
         return signal
 
     async def maybe_execute(self, symbol: str, *, account: AccountState, now_ts: Optional[str] = None) -> TradeResult:
         t0 = time.perf_counter()
         sym = symbol.strip()
 
-        snapshot, signal = await self._snapshot_and_signal(sym, account=account, now_ts=now_ts)
+        snapshot, constraints, signal = await self._snapshot_and_signal(sym, account=account, now_ts=now_ts)
 
-        # HOLD: no broker call
         if signal.action == "HOLD":
             logger.info("execute_skip_hold | symbol=%s conf=%.3f reason=%r", sym, float(signal.confidence), signal.reason)
             return TradeResult(
@@ -259,16 +235,21 @@ class StrategyEngine:
                 ts=snapshot.ts or utcnow(),
                 symbol=sym,
                 action="HOLD",
-                notional_cny=float(signal.suggested_notional_cny),
+                shares=0,
+                lots=0,
                 paper=True,
                 details={"signal": signal.model_dump(), "snapshot": snapshot.model_dump()},
             )
+
+        suggested_lots = int(signal.suggested_lots)
+        suggested_shares = suggested_lots * int(constraints.lot_size)
 
         ok, why = self.risk.can_trade(
             signal,
             account=account,
             snapshot=snapshot,
-            suggested_notional_cny=float(signal.suggested_notional_cny),
+            suggested_shares=int(suggested_shares),
+            lot_size=int(constraints.lot_size),
         )
 
         if not ok:
@@ -285,13 +266,19 @@ class StrategyEngine:
                 ts=snapshot.ts or utcnow(),
                 symbol=sym,
                 action=signal.action,
-                notional_cny=float(signal.suggested_notional_cny),
+                shares=int(suggested_shares),
+                lots=int(suggested_lots),
                 paper=True,
                 details={"signal": signal.model_dump(), "snapshot": snapshot.model_dump()},
             )
 
-        # broker order
-        req = TradeRequest(symbol=sym, action=signal.action, notional_cny=float(signal.suggested_notional_cny))
+        req = TradeRequest(
+            symbol=sym,
+            action=signal.action,
+            shares=int(suggested_shares),
+            lot_size=int(constraints.lot_size),
+        )
+
         broker_t0 = time.perf_counter()
         res = await self.broker.place_order(req)
         broker_ms = (time.perf_counter() - broker_t0) * 1000.0
@@ -300,11 +287,12 @@ class StrategyEngine:
         res.details.setdefault("snapshot", snapshot.model_dump())
 
         logger.info(
-            "execute_done | symbol=%s ok=%s action=%s notional_cny=%.2f broker_ms=%.1f msg=%r",
+            "execute_done | symbol=%s ok=%s action=%s lots=%s shares=%s broker_ms=%.1f msg=%r",
             sym,
             bool(res.ok),
             res.action,
-            float(res.notional_cny),
+            int(suggested_lots),
+            int(suggested_shares),
             broker_ms,
             res.message,
         )
@@ -312,14 +300,14 @@ class StrategyEngine:
         if res.ok:
             self.risk.record_trade()
 
-            # best-effort: persist feedback
             record = {
                 "decision_ts": (snapshot.ts or utcnow()).strftime("%Y-%m-%d %H:%M:%S"),
                 "action": signal.action,
                 "expected_direction": signal.expected_direction,
                 "confidence": float(signal.confidence),
                 "executed_price_cny": None,
-                "shares": None,
+                "shares": int(suggested_shares),
+                "lots": int(suggested_lots),
                 "fees_cny": None,
                 "realized_pnl_cny": None,
                 "comment": f"Executed via broker | msg={res.message}",

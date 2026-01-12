@@ -16,7 +16,7 @@ class LLMChatRequest(BaseModel):
     user: Optional[str] = Field(default=None, description="Convenience: single user message (appends to messages)")
 
     # Optional: ask for JSON-structured output
-    json_schema: Optional[Dict[str, Any]] = Field(default=None, description="JSON Schema for structured response")
+    json_schema: Optional[Dict[str, Any]]
 
     # Optional LLM knobs
     temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)

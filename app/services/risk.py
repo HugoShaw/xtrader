@@ -51,11 +51,11 @@ class RiskManager:
         *,
         account: AccountState,
         snapshot: MarketSnapshot,
-        suggested_notional_cny: float,
+        suggested_shares: int,
+        lot_size: int,
     ) -> tuple[bool, str]:
         """
-        NOTE: this checks only risk/eligibility.
-        Actual share sizing can still happen in Strategy/Broker, but this blocks obvious violations.
+        Shares-based risk checks (CN-A lot rules).
         """
         self.state.reset_if_new_day()
 
@@ -80,33 +80,33 @@ class RiskManager:
         cash = float(account.cash_cny)
         pos = int(account.position_shares)
 
-        # Current exposure
+        lot_size = int(lot_size) if lot_size and int(lot_size) > 0 else int(self.lot_size)
+
+        # must be positive and aligned to lot size
+        shares = int(suggested_shares)
+        if shares <= 0:
+            return False, "shares_zero"
+        if shares % lot_size != 0:
+            return False, "shares_not_multiple_of_lot"
+
+        # exposure checks
         position_value_cny = pos * last
         if position_value_cny > self.max_position_value_cny * 1.001:
             return False, "max_position_value_exceeded"
 
-        notional = max(0.0, float(suggested_notional_cny))
-
-        # Optional: block “too small to execute 1 lot” (helps reduce nonsense trades)
-        min_lot_value = self.lot_size * last
-        if notional > 0 and notional < min_lot_value * 0.98:
-            return False, "notional_too_small_for_one_lot"
+        order_notional = shares * last
 
         if signal.action == "BUY":
-            # basic cash check
-            if notional <= 0:
-                return False, "buy_notional_zero"
-            if cash < notional:
+            if cash < order_notional:
                 return False, "insufficient_cash"
-
-            # exposure after buy (approx)
-            if (position_value_cny + notional) > self.max_position_value_cny:
+            if (position_value_cny + order_notional) > self.max_position_value_cny:
                 return False, "would_exceed_max_position_value"
 
         if signal.action == "SELL":
             if pos <= 0:
                 return False, "no_position_to_sell"
-            # if you later compute shares precisely, also ensure shares_to_sell <= pos
+            if shares > pos:
+                return False, "sell_shares_exceed_position"
 
         return True, "ok"
 
