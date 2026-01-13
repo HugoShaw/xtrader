@@ -3,7 +3,7 @@
 **xtrader** is an intraday quantitative trading assistant for China A-shares powered by LLMs (DeepSeek/Qwen/OpenAI-compatible).
 It combines **real-time market data**, **account state**, **risk control**, and **trade history feedback** to generate disciplined trading signals every 30 minutes.
 
-> ⚠️ This project is for **research & paper trading** only.
+> ⚠️ This project is for **research & paper trading** only.  
 > Do NOT use with real capital without extensive testing.
 
 ---
@@ -14,7 +14,6 @@ It combines **real-time market data**, **account state**, **risk control**, and 
 * 🔹 Uses **AkShare (Eastmoney)** real-time & minute bars
 * 🔹 Account-aware decisions (cash, position, cost, PnL)
 * 🔹 Strict **risk management**
-
   * max trades per day
   * cooldown
   * confidence threshold
@@ -30,6 +29,7 @@ It combines **real-time market data**, **account state**, **risk control**, and 
 ## Architecture
 
 ```
+
 xtrader/
 │
 ├── app/
@@ -39,13 +39,13 @@ xtrader/
 │
 │   ├── services/
 │   │   ├── strategy.py        # Core trading engine
-│   │   ├── prompt_builder.py # LLM prompt
+│   │   ├── prompt_builder.py  # LLM prompt
 │   │   ├── market_data.py
 │   │   ├── market_data_akshare.py
 │   │   ├── risk.py
 │   │   ├── broker.py
 │   │   ├── llm_client.py
-│   │   └── trade_history_db.py
+│   │   ├── trade_history_db.py
 │   │   └── cache.py
 │
 │   ├── storage/
@@ -57,11 +57,14 @@ xtrader/
 │   └── models_llm.py
 │
 ├── static/
+│   ├── signal.html
+│   ├── execute.html
 │   └── backtest.html
 │
 ├── .env
 └── README.md
-```
+
+````
 
 ---
 
@@ -87,7 +90,7 @@ python -m venv .venv
 source .venv/bin/activate
 
 pip install -r requirements.txt
-```
+````
 
 ---
 
@@ -159,7 +162,7 @@ Response:
   "horizon_minutes": 30,
   "confidence": 0.42,
   "expected_direction": "FLAT",
-  "suggested_notional_usd": 0,
+  "suggested_lots": 0,
   "reason": "...",
   "risk_notes": "..."
 }
@@ -229,6 +232,7 @@ Supports:
    * OHLCV bars
    * account state
    * constraints
+   * recent trade history
 4. LLM outputs JSON signal
 5. RiskManager validates:
 
@@ -279,8 +283,8 @@ signal_done | symbol=000100 action=HOLD conf=0.42 bars=12 hist=3 ms_llm=32000
 * WAL enabled
 * Tables:
 
-  * executions
-  * trade_feedback
+  * executions / intraday records (depends on your ORM naming)
+  * trade_feedback (optional)
 * Auto-created on startup
 
 ---
@@ -291,6 +295,166 @@ signal_done | symbol=000100 action=HOLD conf=0.42 bars=12 hist=3 ms_llm=32000
 * LLM decisions are probabilistic
 * Always test with paper trading
 * Never trust a single model output
+
+---
+
+## Module Relationship Plots
+
+> These diagrams show **how requests flow through xtrader**, and how the **core modules depend on each other**.
+> They’re intentionally “high-level” so you can understand the app quickly before reading code.
+
+### 1) Request Flow (Signal & Execute)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as User/Browser
+    participant API as FastAPI (app.main)
+    participant Strat as StrategyEngine (services/strategy.py)
+    participant Mkt as MarketDataProvider (services/market_data*.py)
+    participant DB as TradeHistoryDB (services/trade_history_db.py)
+    participant Prompt as PromptBuilder (services/prompt_builder.py)
+    participant LLM as LLM Client (services/llm_client.py)
+    participant Risk as RiskManager (services/risk.py)
+    participant Broker as Paper Broker (services/broker.py)
+    participant Store as Storage/Repo (storage/db.py + repo.py)
+
+    User->>API: POST /signal/{symbol}\n(now_ts, account_state)
+    API->>Strat: get_signal(symbol, account, now_ts)
+    Strat->>Mkt: get_snapshot(symbol, end_ts=now_ts)
+    Strat->>DB: list_intraday_today(symbol, now_ts)
+    Strat->>Prompt: build_user_prompt(snapshot, account, constraints, history)
+    Prompt-->>Strat: prompt text
+    Strat->>LLM: chat_json(system, prompt, schema)
+    LLM-->>Strat: TradeSignal JSON
+    Strat-->>API: TradeSignal
+    API-->>User: 200 JSON (signal)
+
+    User->>API: POST /execute/{symbol}\n(now_ts, account_state)
+    API->>Strat: maybe_execute(symbol, account, now_ts)
+    Strat->>Mkt: get_snapshot(...)
+    Strat->>DB: list_intraday_today(...)
+    Strat->>Prompt: build_user_prompt(...)
+    Strat->>LLM: chat_json(...)
+    LLM-->>Strat: TradeSignal JSON
+    Strat->>Risk: can_trade(signal, account, snapshot, suggested_shares)
+    alt blocked
+        Risk-->>Strat: (False, reason)
+        Strat->>DB: append_intraday(status=BLOCKED, record)
+        DB->>Store: write record
+        Strat-->>API: TradeResult(ok=false, reason)
+        API-->>User: 200 JSON (blocked)
+    else allowed
+        Risk-->>Strat: (True, "ok")
+        Strat->>Broker: place_order(request)
+        Broker-->>Strat: TradeResult(ok, message, details)
+        Strat->>DB: append_intraday(status=EXECUTED/FAILED, record)
+        DB->>Store: write record
+        Strat-->>API: TradeResult
+        API-->>User: 200 JSON (result)
+    end
+```
+
+**Interpretation (why this diagram matters):**
+
+* `FastAPI (app.main)` is the **I/O boundary**: it parses input and returns JSON.
+* `StrategyEngine` is the **brain**: snapshot → history → prompt → LLM → risk gate → broker → persistence.
+* `PromptBuilder` creates a **structured, reproducible prompt**, reducing LLM randomness.
+* `RiskManager` is the **hard gate**: even if the LLM says BUY/SELL, risk rules can block it.
+* `TradeHistoryDB + storage/*` forms the **feedback loop**: every decision is persisted and becomes context for later decisions.
+
+---
+
+### 2) Dependency Graph (How modules use each other)
+
+```mermaid
+flowchart LR
+    main[app.main (FastAPI routes)]
+
+    strat[services/strategy.py\nStrategyEngine]
+    prompt[services/prompt_builder.py]
+    risk[services/risk.py\nRiskManager]
+    broker[services/broker.py\nPaper Broker]
+    mkt[services/market_data.py\nMarketDataProvider]
+    ak[services/market_data_akshare.py\nAkShare impl]
+    llm[services/llm_client.py\nOpenAI-compat client]
+    th[services/trade_history_db.py\nTradeHistoryDB]
+    cache[services/cache.py]
+
+    repo[storage/repo.py]
+    db[storage/db.py\nAsync SQLAlchemy]
+    orm[storage/orm_models.py]
+
+    models[app/models.py\nPydantic models]
+    modelsllm[app/models_llm.py\nLLM schema models]
+    cfg[app/config.py\n.env settings]
+    log[app/logging_config.py]
+
+    main --> strat
+
+    strat --> mkt
+    mkt --> ak
+
+    strat --> th
+    th --> repo
+    repo --> db
+    repo --> orm
+
+    strat --> prompt
+    prompt --> models
+
+    strat --> llm
+    llm --> cfg
+
+    strat --> risk
+    risk --> cfg
+
+    strat --> broker
+
+    strat --> models
+    llm --> modelsllm
+    prompt --> modelsllm
+
+    main --> cfg
+    main --> log
+
+    mkt -. optional .-> cache
+    th -. optional .-> cache
+```
+
+**Interpretation (how to read this graph):**
+
+* Everything starts at `app.main` (routes) and hands off to `StrategyEngine`.
+* `services/*` are the **business logic layer**:
+
+  * Market side: `market_data.py` (interface) → `market_data_akshare.py` (implementation)
+  * LLM side: `prompt_builder.py` → `llm_client.py`
+  * Control side: `risk.py` and `broker.py`
+  * Memory side: `trade_history_db.py` → `storage/*`
+* `storage/*` is an **implementation detail** behind trade history:
+
+  * `repo.py` runs queries
+  * `db.py` manages engine/session
+  * `orm_models.py` defines tables
+* `models.py / models_llm.py` define **validated contracts** between modules.
+
+---
+
+### 3) Feedback Loop (Why history improves decisions)
+
+```mermaid
+flowchart TB
+    A[Execute/Signal Decision] --> B[Persist intraday record\nTradeHistoryDB -> SQLite]
+    B --> C[Next request loads recent records]
+    C --> D[PromptBuilder includes\nhistory + outcomes]
+    D --> E[LLM sees what happened\nand avoids repeating mistakes]
+    E --> A
+```
+
+**Interpretation (the “learning without training” idea):**
+
+* This is not model fine-tuning.
+* It’s **contextual learning**: the LLM is guided by your own recent actions & outcomes stored in SQLite.
 
 ---
 
@@ -305,10 +469,3 @@ signal_done | symbol=000100 action=HOLD conf=0.42 bars=12 hist=3 ms_llm=32000
 * [ ] Alert system
 
 ---
-
-## Disclaimer
-
-This software is provided **as-is**.
-You are solely responsible for any trading decisions.
-
---- 

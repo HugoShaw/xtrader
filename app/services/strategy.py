@@ -1,6 +1,7 @@
 # app/services/strategy.py
 from __future__ import annotations
 
+import json
 import time
 from datetime import datetime, timezone
 from typing import Optional, Tuple, Any, Dict, List
@@ -49,12 +50,33 @@ SIGNAL_SCHEMA_HINT = {
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
+def _jsonable(obj: Any) -> Any:
+    """Convert pydantic models / datetimes into json-safe structures."""
+    if obj is None:
+        return None
+    # pydantic v2 models
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump(mode="json")
+    # plain datetime
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    return obj
 
 class StrategyEngine:
     """
     Provider-agnostic strategy engine.
 
-    Works with AkShareAStockProvider or any provider implementing MarketDataProvider.get_snapshot().
+    Flow:
+      snapshot (market) + intraday_records_today (db) + account + constraints
+        -> prompt_builder
+        -> LLM JSON TradeSignal
+        -> risk gating
+        -> broker place_order (paper)
+      All decisions are persisted as "intraday records" for feedback-loop.
+
+    Requires TradeHistoryDB to implement:
+      - list_intraday_today(symbol, now_ts, limit) -> List[Dict]
+      - append_intraday(symbol, now_ts, record) -> None
     """
 
     def __init__(
@@ -64,14 +86,14 @@ class StrategyEngine:
         risk: RiskManager,
         broker: Broker,
         *,
-        fixed_lots: int = 1,  # default lots for BUY/SELL if model outputs 0
+        fixed_lots: int = 1,
         trade_history_db: TradeHistoryDB,
         timezone_name: str = "Asia/Shanghai",
-        lot_size: int = 100,  # shares per lot (CN-A usually 100)
+        lot_size: int = 100,
         max_order_shares: Optional[int] = 10000,
         fees_bps_est: int = 5,
         slippage_bps_est: int = 5,
-        trade_history_limit: int = 50,
+        trade_history_limit: int = 10,
         market_kwargs: Optional[Dict[str, Any]] = None,
     ):
         self.market = market
@@ -92,7 +114,7 @@ class StrategyEngine:
         self.market_kwargs = dict(market_kwargs or {})
 
         logger.info(
-            "StrategyEngine initialized | lot_size=%s max_order_shares=%s fixed_lots=%s "
+            "StrategyEngine initialized | lot_size=%s max_order_shares=%s fixed_lots=%s"
             "min_confidence=%s trade_history_limit=%s market_kwargs=%s",
             self.lot_size,
             self.max_order_shares,
@@ -108,13 +130,9 @@ class StrategyEngine:
         *,
         account: AccountState,
         now_ts: Optional[str] = None,
-    ) -> Tuple[MarketSnapshot, ExecutionConstraints, TradeSignal]:
-        """
-        Fetch snapshot -> load trade history -> build prompt -> LLM JSON output.
-        """
+    ) -> Tuple[MarketSnapshot, ExecutionConstraints, TradeSignal, List[Dict[str, Any]]]:
         t0 = time.perf_counter()
         sym = symbol.strip()
-
         trades_left = self.risk.trades_left()
 
         logger.info(
@@ -126,22 +144,12 @@ class StrategyEngine:
             trades_left,
         )
 
-        # 1) market snapshot
+        # 1) snapshot
         snap_t0 = time.perf_counter()
         snapshot = await self.market.get_snapshot(sym, end_ts=now_ts, **self.market_kwargs)
         snap_ms = (time.perf_counter() - snap_t0) * 1000.0
 
-        logger.warning(
-            "DEBUG snapshot | symbol=%s last_price=%s bars_count=%s day_volume=%s vwap=%s extra_keys=%s",
-            sym,
-            snapshot.last_price,
-            len(snapshot.recent_bars or []),
-            snapshot.day_volume,
-            snapshot.vwap,
-            list(snapshot.extra.keys()) if snapshot.extra else None,
-        )
-
-        # 2) constraints (shared by prompt + execution)
+        # 2) constraints
         constraints = ExecutionConstraints(
             horizon_minutes=30,
             max_trades_left_today=trades_left,
@@ -152,25 +160,30 @@ class StrategyEngine:
             slippage_bps_est=self.slippage_bps_est,
         )
 
-        # 3) trade history (DB-backed)
+        # 3) intraday trade records (Shanghai today)
         hist_t0 = time.perf_counter()
-        trade_history_records: List[Dict[str, Any]] = await self.trade_history_db.list_records(
-            symbol=sym,
-            limit=self.trade_history_limit,
-        )
+        try:
+            intraday_records_today = await self.trade_history_db.list_intraday_today(
+                symbol=sym,
+                now_ts=now_ts,
+                limit=self.trade_history_limit,
+            )
+        except Exception as e:
+            logger.warning("trade_history_list_failed | symbol=%s err=%s: %s", sym, type(e).__name__, e)
+            intraday_records_today = []
         hist_ms = (time.perf_counter() - hist_t0) * 1000.0
 
-        # 4) build prompt
+        # 4) prompt
         prompt = build_user_prompt(
             snapshot,
             now_ts=now_ts or (snapshot.ts.strftime("%Y-%m-%d %H:%M:%S") if snapshot.ts else None),
             timezone_name=self.timezone_name,
             account=account,
             constraints=constraints,
-            trade_history_records=trade_history_records,
+            trade_history_records=intraday_records_today,
         )
 
-        # 5) call LLM
+        # 5) LLM
         llm_t0 = time.perf_counter()
         signal: TradeSignal = await self.llm.chat_json(
             system_prompt=SYSTEM_PROMPT,
@@ -179,15 +192,14 @@ class StrategyEngine:
         )
         llm_ms = (time.perf_counter() - llm_t0) * 1000.0
 
-        # hard enforce horizon
+        # enforce horizon
         signal.horizon_minutes = 30
 
-        # ✅ sizing normalization (lots)
+        # normalize lots
         if signal.action in ("BUY", "SELL"):
             if int(signal.suggested_lots) <= 0 and self.fixed_lots > 0:
                 signal.suggested_lots = self.fixed_lots
 
-            # cap by max_order_shares (convert to lots)
             if self.max_order_shares is not None and self.max_order_shares > 0:
                 max_lots_by_cap = max(int(self.max_order_shares // max(self.lot_size, 1)), 0)
                 signal.suggested_lots = min(int(signal.suggested_lots), max_lots_by_cap)
@@ -207,7 +219,7 @@ class StrategyEngine:
             int(signal.suggested_lots),
             shares_hint,
             len(snapshot.recent_bars or []),
-            len(trade_history_records),
+            len(intraday_records_today),
             total_ms,
             snap_ms,
             hist_ms,
@@ -215,20 +227,58 @@ class StrategyEngine:
             getattr(snapshot, "last_price", None),
         )
 
-        return snapshot, constraints, signal
+        return snapshot, constraints, signal, intraday_records_today
 
     async def get_signal(self, symbol: str, *, account: AccountState, now_ts: Optional[str] = None) -> TradeSignal:
-        _, _, signal = await self._snapshot_and_signal(symbol, account=account, now_ts=now_ts)
+        _, _, signal, _ = await self._snapshot_and_signal(symbol, account=account, now_ts=now_ts)
         return signal
 
     async def maybe_execute(self, symbol: str, *, account: AccountState, now_ts: Optional[str] = None) -> TradeResult:
         t0 = time.perf_counter()
         sym = symbol.strip()
 
-        snapshot, constraints, signal = await self._snapshot_and_signal(sym, account=account, now_ts=now_ts)
+        snapshot, constraints, signal, _ = await self._snapshot_and_signal(sym, account=account, now_ts=now_ts)
 
+        suggested_lots = int(signal.suggested_lots) if signal.action in ("BUY", "SELL") else 0
+        suggested_shares = suggested_lots * int(constraints.lot_size)
+
+        async def _save_intraday(
+            *,
+            status: str,
+            ok: bool,
+            message: str,
+            broker_details: Optional[Dict[str, Any]] = None,
+        ) -> None:
+            try:
+                decision_dt = snapshot.ts or utcnow()
+                record = {
+                    "decision_ts": decision_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                    "action": signal.action,
+                    "expected_direction": signal.expected_direction,
+                    "confidence": float(signal.confidence),
+                    "reason": signal.reason,
+                    "risk_notes": signal.risk_notes,
+                    "lot_size": int(constraints.lot_size),
+                    "suggested_lots": int(suggested_lots),
+                    "suggested_shares": int(suggested_shares),
+                    "status": status,
+                    "ok": bool(ok),
+                    "message": message,
+                    "signal_json": json.dumps(_jsonable(signal), ensure_ascii=False),
+                    "snapshot_json": json.dumps(_jsonable(snapshot), ensure_ascii=False),
+                    "broker_details_json": json.dumps(_jsonable(broker_details), ensure_ascii=False) if broker_details else None,
+                    "executed_price_cny": None,
+                    "fees_cny": None,
+                    "realized_pnl_cny": None,
+                }
+                await self.trade_history_db.append_intraday(symbol=sym, now_ts=now_ts, record=record)
+            except Exception as e:
+                logger.warning("intraday_save_failed | symbol=%s err=%s: %s", sym, type(e).__name__, e)
+
+        # HOLD
         if signal.action == "HOLD":
             logger.info("execute_skip_hold | symbol=%s conf=%.3f reason=%r", sym, float(signal.confidence), signal.reason)
+            await _save_intraday(status="HOLD", ok=True, message="hold (no order placed)")
             return TradeResult(
                 ok=True,
                 message="hold (no order placed)",
@@ -241,9 +291,7 @@ class StrategyEngine:
                 details={"signal": signal.model_dump(), "snapshot": snapshot.model_dump()},
             )
 
-        suggested_lots = int(signal.suggested_lots)
-        suggested_shares = suggested_lots * int(constraints.lot_size)
-
+        # risk gating (NOTE: your RiskManager must accept suggested_shares + lot_size)
         ok, why = self.risk.can_trade(
             signal,
             account=account,
@@ -260,6 +308,7 @@ class StrategyEngine:
                 float(signal.confidence),
                 why,
             )
+            await _save_intraday(status="BLOCKED", ok=False, message=f"blocked: {why}")
             return TradeResult(
                 ok=False,
                 message=f"blocked: {why}",
@@ -272,6 +321,7 @@ class StrategyEngine:
                 details={"signal": signal.model_dump(), "snapshot": snapshot.model_dump()},
             )
 
+        # broker order (shares-based)
         req = TradeRequest(
             symbol=sym,
             action=signal.action,
@@ -283,6 +333,7 @@ class StrategyEngine:
         res = await self.broker.place_order(req)
         broker_ms = (time.perf_counter() - broker_t0) * 1000.0
 
+        # attach for API return/debug
         res.details.setdefault("signal", signal.model_dump())
         res.details.setdefault("snapshot", snapshot.model_dump())
 
@@ -297,27 +348,16 @@ class StrategyEngine:
             res.message,
         )
 
+        await _save_intraday(
+            status="EXECUTED" if res.ok else "FAILED",
+            ok=bool(res.ok),
+            message=str(res.message),
+            broker_details=res.details,
+        )
+
         if res.ok:
             self.risk.record_trade()
 
-            record = {
-                "decision_ts": (snapshot.ts or utcnow()).strftime("%Y-%m-%d %H:%M:%S"),
-                "action": signal.action,
-                "expected_direction": signal.expected_direction,
-                "confidence": float(signal.confidence),
-                "executed_price_cny": None,
-                "shares": int(suggested_shares),
-                "lots": int(suggested_lots),
-                "fees_cny": None,
-                "realized_pnl_cny": None,
-                "comment": f"Executed via broker | msg={res.message}",
-            }
-            try:
-                await self.trade_history_db.append_record(symbol=sym, record=record)
-            except Exception as e:
-                logger.warning("trade_history_append_failed | symbol=%s err=%s: %s", sym, type(e).__name__, e)
-
         total_ms = (time.perf_counter() - t0) * 1000.0
         logger.info("execute_total | symbol=%s ms_total=%.1f", sym, total_ms)
-
         return res

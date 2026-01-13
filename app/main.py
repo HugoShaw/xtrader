@@ -14,8 +14,7 @@ from app.config import settings
 
 from app.services.cache import build_cache
 
-from app.storage.db import make_engine, make_session_factory, init_db, session_scope
-from app.storage.repo import ExecutionRepo
+from app.storage.db import make_engine, make_session_factory, init_db, session_scope 
 
 from app.services.market_data import build_market_provider
 from app.services.llm_client import OpenAICompatLLM
@@ -153,6 +152,23 @@ def normalize_cn_symbol(symbol: str) -> str:
 # -------------------------
 # Basic endpoints
 # -------------------------
+@app.get("/", response_class=HTMLResponse)
+async def home():
+    return HTMLResponse(
+        """
+        <html>
+          <head><title>xtrader</title></head>
+          <body>
+            <h3>xtrader backend is running</h3>
+            <ul>
+              <li>POST /signal/{symbol}</li>
+              <li>POST /execute/{symbol}</li>
+            </ul>
+          </body>
+        </html>
+        """
+    )
+
 @app.get("/health", tags=["system"])
 async def health():
     return {"ok": True, "app": "xtrader"}
@@ -177,11 +193,12 @@ async def risk_status():
 async def signal(symbol: str, ctx: TradingContextIn):
     """
     Account-aware signal:
-    Build prompt including account_state + execution_constraints + trade_history + bars_5m,
-    then request a TradeSignal JSON from LLM.
+    - Receive account_state + (optional) now_ts
+    - Fetch snapshot + today's intraday records from DB
+    - Build prompt -> DeepSeek (OpenAI-compatible) -> return TradeSignal JSON
     """
-    code = normalize_cn_symbol(symbol)
     try:
+        code = normalize_cn_symbol(symbol)
         acc = AccountState(
             cash_cny=ctx.account_state.cash_cny,
             position_shares=ctx.account_state.position_shares,
@@ -191,10 +208,35 @@ async def signal(symbol: str, ctx: TradingContextIn):
         trading_engine: StrategyEngine = app.state.trading_engine
         sig = await trading_engine.get_signal(code, account=acc, now_ts=ctx.now_ts)
         return sig
-    except HTTPException:
-        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"signal_error: {e}")
+
+ 
+@app.post("/execute/{symbol}", tags=["trading"])
+async def execute(symbol: str, ctx: TradingContextIn):
+    """
+    Account-aware execute (paper for now):
+    - HOLD => ok=True, no broker call
+    - BUY/SELL => risk-checked, place paper order
+    - StrategyEngine persists intraday records into DB (for prompt feedback-loop)
+    """
+    try:
+        code = normalize_cn_symbol(symbol)
+        acc = AccountState(
+            cash_cny=ctx.account_state.cash_cny,
+            position_shares=ctx.account_state.position_shares,
+            avg_cost_cny=ctx.account_state.avg_cost_cny,
+            unrealized_pnl_cny=ctx.account_state.unrealized_pnl_cny,
+        )
+        trading_engine: StrategyEngine = app.state.trading_engine
+        res = await trading_engine.maybe_execute(code, account=acc, now_ts=ctx.now_ts)
+        return res
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"execute_error: {e}")
 
 @app.get("/signal-ui", response_class=HTMLResponse, tags=["ui"])
 async def signal_ui_page():
@@ -206,48 +248,10 @@ async def signal_ui_page():
         )
     return html_path.read_text(encoding="utf-8")
 
-@app.post("/execute/{symbol}", tags=["trading"])
-async def execute(symbol: str, ctx: TradingContextIn):
-    """
-    Account-aware paper execute:
-    - HOLD => ok=True, no broker order
-    - BUY/SELL => risk-checked, place paper order
-    Also saves execution record into DB (ExecutionRepo).
-    """
-    code = normalize_cn_symbol(symbol)
-    try:
-        acc = AccountState(
-            cash_cny=ctx.account_state.cash_cny,
-            position_shares=ctx.account_state.position_shares,
-            avg_cost_cny=ctx.account_state.avg_cost_cny,
-            unrealized_pnl_cny=ctx.account_state.unrealized_pnl_cny,
-        )
-
-        trading_engine: StrategyEngine = app.state.trading_engine
-        res = await trading_engine.maybe_execute(code, account=acc, now_ts=ctx.now_ts)
-
-        session_factory = app.state.session_factory
-        async with session_scope(session_factory) as s:
-            repo = ExecutionRepo(s)
-            await repo.add_execution(
-                symbol=code,
-                ts=res.ts,
-                action=res.action,
-                notional_cny=res.notional_cny,
-                paper=res.paper,
-                ok=res.ok,
-                message=res.message,
-                signal=(res.details.get("signal") if isinstance(res.details, dict) else None),
-                snapshot=(res.details.get("snapshot") if isinstance(res.details, dict) else None),
-                broker_details=(res.details if isinstance(res.details, dict) else None),
-            )
-
-        return res
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"execute_error: {e}")
-
+@app.get("/ui/execute", response_class=HTMLResponse, tags=["ui"])
+async def ui_execute():
+    # serves app/static/execute.html
+    return HTMLResponse((STATIC_DIR / "execute.html").read_text(encoding="utf-8"))
 
 @app.get("/trade_history/{symbol}", tags=["trading"])
 async def get_trade_history(symbol: str, limit: int = Query(50, ge=1, le=200)):
