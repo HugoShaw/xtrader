@@ -65,7 +65,7 @@ async def lifespan(app: FastAPI):
     # 5) Core services
     market = build_market_provider(
         settings.market_provider,          # whatever you use, e.g. "akshare"
-        cache=app.state.cache,             # Memory now, Redis later
+        cache=cache,             # Memory now, Redis later
         # spot_ttl_sec=settings.cache_spot_ttl_sec,
         orderbook_ttl_sec=settings.cache_orderbook_ttl_sec,
         bars_ttl_sec=settings.cache_bars_ttl_sec,
@@ -95,20 +95,10 @@ async def lifespan(app: FastAPI):
         llm=llm,
         risk=risk,
         broker=broker,
-        fixed_lots=settings.fixed_slots,
-        trade_history_db=trade_history_db, 
-        timezone_name="Asia/Shanghai",
-        lot_size=100,
-        max_order_shares=1000,
-        fees_bps_est=5,
-        slippage_bps_est=5,
-        market_kwargs={
-            "min_period": "5",
-            "min_lookback_minutes": 120,     # usually enough for intraday
-            "include_orderbook": False,      # orderbook is expensive; enable only when needed
-            "include_bars": True,
-        },
-    ) 
+        fixed_lots=settings.fixed_slots,     # keep your existing setting name
+        trade_history_db=trade_history_db,
+        trade_history_limit=10,
+    )
     app.state.trading_engine = trading_engine
 
     try:
@@ -189,50 +179,79 @@ async def risk_status():
 # -------------------------
 # Trading routes (account-aware)
 # -------------------------
+
 @app.post("/signal/{symbol}", tags=["trading"])
 async def signal(symbol: str, ctx: TradingContextIn):
     """
     Account-aware signal:
-    - Receive account_state + (optional) now_ts
-    - Fetch snapshot + today's intraday records from DB
-    - Build prompt -> DeepSeek (OpenAI-compatible) -> return TradeSignal JSON
+    - Body includes account_state + now_ts + optional options overrides
     """
     try:
         code = normalize_cn_symbol(symbol)
+
         acc = AccountState(
             cash_cny=ctx.account_state.cash_cny,
             position_shares=ctx.account_state.position_shares,
             avg_cost_cny=ctx.account_state.avg_cost_cny,
             unrealized_pnl_cny=ctx.account_state.unrealized_pnl_cny,
         )
+
         trading_engine: StrategyEngine = app.state.trading_engine
-        sig = await trading_engine.get_signal(code, account=acc, now_ts=ctx.now_ts)
+
+        opt = ctx.options
+        sig = await trading_engine.get_signal(
+            code,
+            account=acc,
+            now_ts=ctx.now_ts,
+            timezone_name=opt.timezone_name,
+            lot_size=int(opt.lot_size),
+            max_order_shares=opt.normalized_max_order_shares(),
+            fees_bps_est=int(opt.fees_bps_est),
+            slippage_bps_est=int(opt.slippage_bps_est),
+            market_kwargs=opt.market.to_kwargs(),
+        )
         return sig
+
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"signal_error: {e}")
 
- 
+
 @app.post("/execute/{symbol}", tags=["trading"])
 async def execute(symbol: str, ctx: TradingContextIn):
     """
     Account-aware execute (paper for now):
     - HOLD => ok=True, no broker call
     - BUY/SELL => risk-checked, place paper order
-    - StrategyEngine persists intraday records into DB (for prompt feedback-loop)
+    - persists intraday records into DB
     """
     try:
         code = normalize_cn_symbol(symbol)
+
         acc = AccountState(
             cash_cny=ctx.account_state.cash_cny,
             position_shares=ctx.account_state.position_shares,
             avg_cost_cny=ctx.account_state.avg_cost_cny,
             unrealized_pnl_cny=ctx.account_state.unrealized_pnl_cny,
         )
+
         trading_engine: StrategyEngine = app.state.trading_engine
-        res = await trading_engine.maybe_execute(code, account=acc, now_ts=ctx.now_ts)
+
+        opt = ctx.options
+        res = await trading_engine.maybe_execute(
+            code,
+            account=acc,
+            now_ts=ctx.now_ts,
+            timezone_name=opt.timezone_name,
+            lot_size=int(opt.lot_size),
+            max_order_shares=opt.normalized_max_order_shares(),
+            fees_bps_est=int(opt.fees_bps_est),
+            slippage_bps_est=int(opt.slippage_bps_est),
+            market_kwargs=opt.market.to_kwargs(),
+        )
         return res
+
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -254,10 +273,15 @@ async def ui_execute():
     return HTMLResponse((STATIC_DIR / "execute.html").read_text(encoding="utf-8"))
 
 @app.get("/trade_history/{symbol}", tags=["trading"])
-async def get_trade_history(symbol: str, limit: int = Query(50, ge=1, le=200)):
+async def get_trade_history(
+    symbol: str,
+    now_ts: str = Query(..., description="YYYY-MM-DD HH:MM:SS"),
+    limit: int = Query(50, ge=1, le=200),
+    include_json: bool = Query(False),
+):
     code = normalize_cn_symbol(symbol)
     trade_history_db: TradeHistoryDB = app.state.trade_history_db
-    recs = await trade_history_db.list_records(code, limit=limit)
+    recs = await trade_history_db.list_intraday_today(code, now_ts=now_ts, limit=limit, include_json=include_json)
     return {"symbol": code, "count": len(recs), "records": recs}
 
 

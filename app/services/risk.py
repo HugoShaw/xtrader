@@ -2,26 +2,52 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from datetime import datetime, date
+from typing import Optional, Tuple
 
-from app.models import TradeSignal, AccountState, MarketSnapshot
-
-CN_TZ = ZoneInfo("Asia/Shanghai")
+from app.models import TradeSignal, AccountState, MarketSnapshot, ExecutionConstraints
+from app.utils.timeutils import now_shanghai, ensure_shanghai
 
 
 @dataclass
 class RiskState:
     trades_today: int = 0
-    last_trade_ts: datetime | None = None
-    day: datetime.date = datetime.now(CN_TZ).date()
+    last_trade_ts: Optional[datetime] = None  # tz-aware Shanghai
+    day: date = now_shanghai().date()
 
-    def reset_if_new_day(self):
-        today = datetime.now(CN_TZ).date()
+    def reset_if_new_day(self, *, ref_dt: Optional[datetime] = None) -> None:
+        """
+        Reset counters when entering a new Shanghai trading day.
+        Prefer using the decision timestamp (snapshot.ts) if supplied.
+        """
+        dt = ensure_shanghai(ref_dt) if ref_dt is not None else ensure_shanghai(now_shanghai())
+        today = dt.date()
         if today != self.day:
             self.day = today
             self.trades_today = 0
             self.last_trade_ts = None
+
+
+def _safe_float(x: object) -> Optional[float]:
+    try:
+        if x is None:
+            return None
+        v = float(x)
+        return v if (v == v) else None  # NaN guard
+    except Exception:
+        return None
+
+
+def _all_in_cost_rate_from_constraints(constraints: ExecutionConstraints) -> float:
+    """
+    Option A: treat total friction as fee + slippage, both in bps (1e-4).
+    """
+    fee_bps = int(getattr(constraints, "fees_bps_est", 0) or 0)
+    slip_bps = int(getattr(constraints, "slippage_bps_est", 0) or 0)
+    # clamp to sane bounds to avoid user mistakes
+    fee_bps = max(0, min(fee_bps, 50_000))
+    slip_bps = max(0, min(slip_bps, 50_000))
+    return (fee_bps + slip_bps) / 1e4
 
 
 class RiskManager:
@@ -34,11 +60,11 @@ class RiskManager:
         max_position_value_cny: float,
         lot_size: int = 100,
     ):
-        self.max_trades_per_day = int(max_trades_per_day)
-        self.cooldown_seconds = int(cooldown_seconds)
+        self.max_trades_per_day = max(0, int(max_trades_per_day))
+        self.cooldown_seconds = max(0, int(cooldown_seconds))
         self.min_confidence = float(min_confidence)
-        self.max_position_value_cny = float(max_position_value_cny)
-        self.lot_size = int(lot_size)
+        self.max_position_value_cny = max(0.0, float(max_position_value_cny))
+        self.lot_size = max(1, int(lot_size))
         self.state = RiskState()
 
     def trades_left(self) -> int:
@@ -51,55 +77,76 @@ class RiskManager:
         *,
         account: AccountState,
         snapshot: MarketSnapshot,
+        constraints: Optional[ExecutionConstraints] = None,
         suggested_shares: int,
         lot_size: int,
-    ) -> tuple[bool, str]:
+        decision_dt: Optional[datetime] = None,
+    ) -> Tuple[bool, str]:
         """
         Shares-based risk checks (CN-A lot rules).
+        Uses Shanghai time; cooldown anchored to decision_dt (snapshot.ts) if possible.
+
+        If constraints is supplied:
+          - BUY cash check includes all-in friction (fee+slippage) using bps in constraints.
         """
-        self.state.reset_if_new_day()
+        # anchor day/cooldown to decision time when provided
+        if decision_dt is None:
+            decision_dt = getattr(snapshot, "ts", None)
+        decision_dt = ensure_shanghai(decision_dt) if decision_dt is not None else ensure_shanghai(now_shanghai())
 
-        if self.state.trades_today >= self.max_trades_per_day:
-            return False, "trade_limit_reached"
-
-        if float(signal.confidence) < self.min_confidence:
-            return False, "confidence_too_low"
-
-        if self.state.last_trade_ts is not None:
-            dt = (datetime.now(CN_TZ) - self.state.last_trade_ts).total_seconds()
-            if dt < self.cooldown_seconds:
-                return False, "cooldown_active"
+        self.state.reset_if_new_day(ref_dt=decision_dt)
 
         if signal.action == "HOLD":
             return False, "hold_signal"
 
-        last = float(snapshot.last_price or 0.0)
+        if self.state.trades_today >= self.max_trades_per_day:
+            return False, "trade_limit_reached"
+
+        conf = _safe_float(getattr(signal, "confidence", None)) or 0.0
+        if conf < float(self.min_confidence):
+            return False, "confidence_too_low"
+
+        # cooldown
+        if self.state.last_trade_ts is not None and self.cooldown_seconds > 0:
+            last_dt = ensure_shanghai(self.state.last_trade_ts)
+            dt_sec = (decision_dt - last_dt).total_seconds()
+            if dt_sec < float(self.cooldown_seconds):
+                return False, "cooldown_active"
+
+        last = _safe_float(getattr(snapshot, "last_price", None)) or 0.0
         if last <= 0:
             return False, "invalid_last_price"
 
-        cash = float(account.cash_cny)
-        pos = int(account.position_shares)
+        cash = float(getattr(account, "cash_cny", 0.0) or 0.0)
+        pos = int(getattr(account, "position_shares", 0) or 0)
 
-        lot_size = int(lot_size) if lot_size and int(lot_size) > 0 else int(self.lot_size)
+        lot_size_eff = int(lot_size) if lot_size and int(lot_size) > 0 else int(self.lot_size)
 
-        # must be positive and aligned to lot size
-        shares = int(suggested_shares)
+        shares = int(suggested_shares or 0)
         if shares <= 0:
             return False, "shares_zero"
-        if shares % lot_size != 0:
+        if shares % lot_size_eff != 0:
             return False, "shares_not_multiple_of_lot"
 
-        # exposure checks
-        position_value_cny = pos * last
+        position_value_cny = float(pos) * float(last)
+
+        # small tolerance to avoid float edge rejects
         if position_value_cny > self.max_position_value_cny * 1.001:
             return False, "max_position_value_exceeded"
 
-        order_notional = shares * last
+        order_notional = float(shares) * float(last)
+
+        # all-in friction for cash impact (Option A)
+        cost_rate = 0.0
+        if constraints is not None:
+            cost_rate = _all_in_cost_rate_from_constraints(constraints)
 
         if signal.action == "BUY":
-            if cash < order_notional:
+            # cash impact includes costs (fees+slippage)
+            cash_required = order_notional * (1.0 + cost_rate)
+            if cash < cash_required - 1e-6:
                 return False, "insufficient_cash"
-            if (position_value_cny + order_notional) > self.max_position_value_cny:
+            if (position_value_cny + order_notional) > self.max_position_value_cny + 1e-6:
                 return False, "would_exceed_max_position_value"
 
         if signal.action == "SELL":
@@ -110,7 +157,15 @@ class RiskManager:
 
         return True, "ok"
 
-    def record_trade(self):
-        self.state.reset_if_new_day()
+    def record_trade(self, *, decision_dt: Optional[datetime] = None) -> None:
+        """
+        Record a successful execution for trade limit + cooldown.
+        Prefer using the same decision_dt you used in can_trade().
+        """
+        if decision_dt is None:
+            decision_dt = now_shanghai()
+        decision_dt = ensure_shanghai(decision_dt)
+
+        self.state.reset_if_new_day(ref_dt=decision_dt)
         self.state.trades_today += 1
-        self.state.last_trade_ts = datetime.now(CN_TZ)
+        self.state.last_trade_ts = decision_dt

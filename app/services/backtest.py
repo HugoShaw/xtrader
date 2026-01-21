@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Dict, Any, Tuple
+from typing import Literal, Dict, Any, Tuple, Optional
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+
 import vectorbt as vbt
 import akshare as ak
 
@@ -17,7 +18,12 @@ class BacktestParams:
     freq: Literal["1", "5", "15", "30", "60"] = "5"
     start: str = "2025-12-01 09:30:00"
     end: str = "2025-12-31 15:00:00"
-    fixed_notional: float = 200.0
+
+    # sizing
+    fixed_notional: float = 200.0     # CNY per trade (approx)
+    lot_size: int = 100              # CN-A usually 100 shares
+
+    # controls
     max_trades_per_day: int = 10
     fee_bps: float = 5.0
     slippage_bps: float = 5.0
@@ -31,6 +37,13 @@ def _parse_dt(s: str) -> pd.Timestamp:
     if pd.isna(ts):
         raise ValueError(f"Invalid datetime: {s} (expected 'YYYY-MM-DD HH:MM:SS')")
     return ts
+
+
+def _detect_time_col(df: pd.DataFrame) -> str:
+    for c in ["时间", "日期", "datetime", "date", "time", "ts"]:
+        if c in df.columns:
+            return c
+    raise ValueError(f"Unexpected minute columns (no time col): {list(df.columns)}")
 
 
 def fetch_minute_bars(params: BacktestParams) -> pd.DataFrame:
@@ -55,17 +68,16 @@ def fetch_minute_bars(params: BacktestParams) -> pd.DataFrame:
     )
 
     if df is None or df.empty:
-        raise ValueError(
-            "No minute data returned. Try a closer date range or larger freq (e.g., 15/30/60)."
-        )
+        raise ValueError("No minute data returned. Try a closer date range or larger freq (e.g., 15/30/60).")
 
-    tcol = "时间" if "时间" in df.columns else ("日期" if "日期" in df.columns else None)
-    if tcol is None:
-        raise ValueError(f"Unexpected minute columns: {list(df.columns)}")
+    tcol = _detect_time_col(df)
+    df[tcol] = pd.to_datetime(df[tcol], errors="coerce")
+    df = df.dropna(subset=[tcol]).sort_values(tcol)
 
-    df[tcol] = pd.to_datetime(df[tcol])
-    df = df.sort_values(tcol).set_index(tcol)
+    # de-dup timestamps (can happen)
+    df = df.drop_duplicates(subset=[tcol], keep="last").set_index(tcol)
 
+    # normalize columns
     rename_map = {}
     for cn, en in [
         ("开盘", "open"),
@@ -74,15 +86,15 @@ def fetch_minute_bars(params: BacktestParams) -> pd.DataFrame:
         ("收盘", "close"),
         ("成交量", "volume"),
         ("成交额", "amount"),
+        ("均价", "vwap"),
+        ("最新价", "close"),
     ]:
         if cn in df.columns:
             rename_map[cn] = en
     df = df.rename(columns=rename_map)
 
-    if "close" not in df.columns and "最新价" in df.columns:
-        df["close"] = df["最新价"].astype(float)
-
-    for col in ["open", "high", "low", "close"]:
+    # numeric coercion
+    for col in ["open", "high", "low", "close", "volume", "amount", "vwap"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
@@ -106,11 +118,11 @@ def placeholder_signals(
     - buy when price < MA - k*STD
     - sell when price > MA + k*STD
     """
-    close = df["close"].copy()
+    close = df["close"].astype(float).copy()
     ret = close.pct_change().fillna(0.0)
 
     vol = ret.rolling(vol_window, min_periods=max(2, vol_window // 3)).std()
-    vol_th = vol.quantile(vol_quantile)
+    vol_th = float(vol.quantile(vol_quantile)) if not vol.dropna().empty else float("inf")
     low_vol = vol <= vol_th
 
     ma = close.rolling(lookback, min_periods=max(2, lookback // 3)).mean()
@@ -119,7 +131,13 @@ def placeholder_signals(
     k = 1.0
     buy = (low_vol & (close < (ma - k * sd))).fillna(False)
     sell = (low_vol & (close > (ma + k * sd))).fillna(False)
-    return buy, sell
+
+    # avoid simultaneous entry/exit on same bar
+    both = buy & sell
+    if both.any():
+        sell = sell & (~both)
+
+    return buy.astype(bool), sell.astype(bool)
 
 
 def enforce_trade_limit_per_day(
@@ -130,7 +148,10 @@ def enforce_trade_limit_per_day(
 ) -> Tuple[pd.Series, pd.Series]:
     """
     Simple per-day trade cap: keep only first N entry signals each day.
+    Exits are kept (naively) to allow closing positions.
     """
+    max_trades_per_day = max(0, int(max_trades_per_day))
+
     ent = pd.Series(False, index=index)
     ex = pd.Series(False, index=index)
 
@@ -139,30 +160,58 @@ def enforce_trade_limit_per_day(
 
     for _, g in df.groupby("day", sort=True):
         ent_idx = g.index[g["entries"]].tolist()
-        ent_keep = ent_idx[:max_trades_per_day]
+        ent_keep = ent_idx[:max_trades_per_day] if max_trades_per_day > 0 else []
         ent.loc[ent_keep] = True
-        ex.loc[g.index[g["exits"]]] = True  # naive: keep all exits
+        ex.loc[g.index[g["exits"]]] = True
 
     return ent, ex
 
 
+def _build_size_series(
+    close: pd.Series,
+    *,
+    fixed_notional: float,
+    lot_size: int,
+) -> pd.Series:
+    """
+    Convert fixed_notional (CNY) into CN-A share size per bar, rounded down to lot_size.
+    """
+    lot_size = max(1, int(lot_size))
+    fixed_notional = float(fixed_notional)
+
+    px = close.astype(float)
+    raw_shares = np.floor((fixed_notional / px).replace([np.inf, -np.inf], np.nan)).fillna(0.0)
+    lots = np.floor(raw_shares / lot_size)
+    shares = (lots * lot_size).astype(int)
+
+    # if notional too small, shares become 0; vectorbt treats 0 as "no order"
+    return shares
+
+
 def run_backtest(params: BacktestParams) -> Dict[str, Any]:
     bars = fetch_minute_bars(params)
-    close = bars["close"]
+    close = bars["close"].astype(float)
 
     entries, exits = placeholder_signals(bars)
     entries2, exits2 = enforce_trade_limit_per_day(close.index, entries, exits, params.max_trades_per_day)
 
-    fee = params.fee_bps / 1e4
-    slippage = params.slippage_bps / 1e4
+    # sizing
+    size = _build_size_series(close, fixed_notional=params.fixed_notional, lot_size=params.lot_size)
 
+    # costs
+    fee = float(params.fee_bps) / 1e4
+    slippage = float(params.slippage_bps) / 1e4
+
+    # Portfolio
     pf = vbt.Portfolio.from_signals(
         close,
         entries=entries2,
         exits=exits2,
+        size=size,               # shares per trade
+        size_type="amount",      # "amount" = number of shares/contracts
         fees=fee,
         slippage=slippage,
-        init_cash=10_000,
+        init_cash=10_000.0,
         freq=f"{params.freq}min",
     )
 
@@ -175,6 +224,10 @@ def run_backtest(params: BacktestParams) -> Dict[str, Any]:
         "freq": params.freq,
         "start": params.start,
         "end": params.end,
+        "fixed_notional": float(params.fixed_notional),
+        "lot_size": int(params.lot_size),
+        "fee_bps": float(params.fee_bps),
+        "slippage_bps": float(params.slippage_bps),
         "stats": stats,
         "equity": equity.reset_index().rename(columns={"index": "ts"}).to_dict(orient="records"),
         "drawdown": drawdown.reset_index().rename(columns={"index": "ts"}).to_dict(orient="records"),
@@ -183,19 +236,23 @@ def run_backtest(params: BacktestParams) -> Dict[str, Any]:
 
 
 def build_report_html(result: Dict[str, Any]) -> str:
-    eq = pd.DataFrame(result["equity"])
-    dd = pd.DataFrame(result["drawdown"])
-    eq["ts"] = pd.to_datetime(eq["ts"])
-    dd["ts"] = pd.to_datetime(dd["ts"])
+    eq = pd.DataFrame(result.get("equity", []))
+    dd = pd.DataFrame(result.get("drawdown", []))
+
+    if not eq.empty:
+        eq["ts"] = pd.to_datetime(eq["ts"], errors="coerce")
+    if not dd.empty:
+        dd["ts"] = pd.to_datetime(dd["ts"], errors="coerce")
 
     fig1 = go.Figure()
-    fig1.add_trace(go.Scatter(x=eq["ts"], y=eq["equity"], mode="lines", name="Equity"))
+    if not eq.empty:
+        fig1.add_trace(go.Scatter(x=eq["ts"], y=eq["equity"], mode="lines", name="Equity"))
 
     fig2 = go.Figure()
-    fig2.add_trace(go.Scatter(x=dd["ts"], y=dd["drawdown"], mode="lines", name="Drawdown"))
+    if not dd.empty:
+        fig2.add_trace(go.Scatter(x=dd["ts"], y=dd["drawdown"], mode="lines", name="Drawdown"))
 
-    stats = result.get("stats", {})
-    # Show first ~80 items, stable order
+    stats = result.get("stats", {}) or {}
     items = list(stats.items())[:80]
     stats_rows = "".join([f"<tr><td>{k}</td><td>{v}</td></tr>" for k, v in items])
 
@@ -204,6 +261,11 @@ def build_report_html(result: Dict[str, Any]) -> str:
     start = result.get("start", "")
     end = result.get("end", "")
     note = result.get("note", "")
+
+    fixed_notional = result.get("fixed_notional", "")
+    lot_size = result.get("lot_size", "")
+    fee_bps = result.get("fee_bps", "")
+    slippage_bps = result.get("slippage_bps", "")
 
     return f"""<!doctype html>
 <html>
@@ -223,6 +285,7 @@ def build_report_html(result: Dict[str, Any]) -> str:
 <body>
   <h2>Backtest Report - {symbol}</h2>
   <div class="muted">freq={freq} | {start} → {end}</div>
+  <div class="muted">fixed_notional={fixed_notional} | lot_size={lot_size} | fee_bps={fee_bps} | slippage_bps={slippage_bps}</div>
   <div class="muted">{note}</div>
 
   <div class="grid">

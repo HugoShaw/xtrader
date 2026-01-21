@@ -47,6 +47,7 @@
       font-weight: 650;
     }
     button.primary { background: rgba(110,168,254,.25); border-color: rgba(110,168,254,.45); }
+    button.ghost { background: rgba(255,255,255,.05); border-color: rgba(255,255,255,.12); }
     button.danger { background: rgba(255, 107, 107, .18); border-color: rgba(255, 107, 107, .45); }
     button:disabled { opacity: .5; cursor: not-allowed; }
 
@@ -132,16 +133,158 @@
       padding: 8px 10px;
       border-radius: 10px;
     }
+
+    /* --- Candlestick plot --- */
+    .chartCard {
+      border: 1px solid rgba(255,255,255,.10);
+      background: rgba(0,0,0,.25);
+      border-radius: 12px;
+      padding: 10px 12px;
+      display: grid;
+      gap: 8px;
+    }
+    /* Make top clickable for folding */
+    .chartTop {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      cursor: pointer;
+      user-select: none;
+      border-radius: 10px;
+      padding: 6px 6px;
+    }
+    .chartTop:hover { background: rgba(255,255,255,.04); }
+
+    .chartTop .title {
+      font-size: 12px;
+      font-weight: 650;
+      opacity: .95;
+      display:flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .chartTop .title .chev {
+      display:inline-block;
+      width: 16px;
+      text-align: center;
+      opacity: .85;
+      transform-origin: 50% 55%;
+      transition: transform .15s ease;
+    }
+    .chartCard.folded .chartTop .title .chev { transform: rotate(-90deg); }
+
+    .chartTop .meta {
+      font-size: 11px;
+      opacity: .75;
+    }
+    .chartWrap {
+      position: relative;
+      width: 100%;
+      height: 260px;
+    }
+    canvas.candle {
+      width: 100%;
+      height: 100%;
+      display: block;
+      border-radius: 10px;
+      background: rgba(0,0,0,.10);
+    }
+    .chartHint {
+      font-size: 11px;
+      opacity: .75;
+      line-height: 1.35;
+    }
+
+    /* Hover tooltip (canvas overlay) */
+    .markerTip {
+      position: absolute;
+      pointer-events: none;
+      transform: translate(-50%, -110%);
+      background: rgba(0,0,0,.80);
+      border: 1px solid rgba(255,255,255,.14);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 12px;
+      line-height: 1.25;
+      color: #e8eefc;
+      box-shadow: 0 10px 30px rgba(0,0,0,.35);
+      display: none;
+      white-space: nowrap;
+    }
+    .markerTip .a { font-weight: 750; }
+    .markerTip .sub { opacity: .85; font-size: 11px; margin-top: 2px; }
+    .markerTip .dot {
+      display:inline-block;
+      width: 8px; height: 8px;
+      border-radius: 999px;
+      margin-right: 6px;
+      vertical-align: middle;
+      border: 1px solid rgba(255,255,255,.18);
+    }
+    .markerTip .dot.buy { background: rgba(110,168,254,.95); }
+    .markerTip .dot.sell { background: rgba(255,107,107,.95); }
+
+    /* Folded state */
+    .chartCard.folded .chartWrap,
+    .chartCard.folded .chartHint {
+      display: none;
+    }
+
+    /* Toggle row */
+    .modeRow {
+      display:flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .seg {
+      display: inline-flex;
+      border: 1px solid rgba(255,255,255,.14);
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(0,0,0,.20);
+    }
+    .seg button {
+      border: none;
+      border-right: 1px solid rgba(255,255,255,.12);
+      border-radius: 0;
+      padding: 8px 10px;
+      font-size: 12px;
+      background: transparent;
+      opacity: .85;
+    }
+    .seg button:last-child { border-right: none; }
+    .seg button.active {
+      background: rgba(110,168,254,.25);
+      opacity: 1;
+    }
+
+    /* --- Summary bar --- */
+    .summaryWrap {
+      padding: 12px 14px 6px;
+      display: grid;
+      gap: 10px;
+    }
+    .summaryGrid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+    }
+    @media (max-width: 980px) { .summaryGrid { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 520px) { .summaryGrid { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
 <header>
-  <h1>xtrader /execute UI</h1>
+  <h1>xtrader trading UI</h1>
   <p>
-    Send a symbol + account state to
-    <span class="pill info">POST /execute/{symbol}</span>
-    (paper for now). Timestamps shown in
-    <span class="pill info">Asia/Shanghai</span>.
+    Send a symbol + trading context to
+    <span class="pill info">POST /signal/{symbol}</span>
+    or
+    <span class="pill info">POST /execute/{symbol}</span>.
+    Timestamps shown in <span class="pill info">Asia/Shanghai</span>.
   </p>
 </header>
 
@@ -155,6 +298,16 @@
           Stock Symbol (6 digits)
           <input id="symbol" placeholder="e.g. 600519" />
         </label>
+
+        <div class="modeRow">
+          <div class="seg" role="tablist" aria-label="Mode">
+            <button id="modeExecute" class="active" type="button">Execute</button>
+            <button id="modeSignal" type="button">Signal</button>
+          </div>
+          <div class="muted">
+            Mode determines which route is called.
+          </div>
+        </div>
 
         <div class="row">
           <label>
@@ -181,7 +334,7 @@
         <div class="row">
           <label>
             now_ts (optional)
-            <input id="nowTs" placeholder="ISO8601 or leave blank (auto uses Shanghai time)" />
+            <input id="nowTs" placeholder='Optional: "YYYY-MM-DD HH:MM:SS" (Asia/Shanghai). Leave blank to let backend use server Shanghai time.' />
           </label>
           <label>
             Frequency (seconds)
@@ -189,11 +342,53 @@
           </label>
         </div>
 
+        <h2 style="margin:0; padding: 6px 0 0; border: none;">Options Overrides (optional)</h2>
+        <div class="row">
+          <label>
+            timezone_name
+            <input id="tzName" placeholder='Asia/Shanghai' />
+          </label>
+          <label>
+            lot_size
+            <input id="lotSize" type="number" step="1" min="1" placeholder="100" />
+          </label>
+        </div>
+        <div class="row">
+          <label>
+            max_order_shares
+            <input id="maxOrderShares" type="number" step="1" min="0" placeholder="10000" />
+          </label>
+          <label>
+            fees_bps_est
+            <input id="feesBps" type="number" step="1" min="0" placeholder="5" />
+          </label>
+        </div>
+        <div class="row">
+          <label>
+            slippage_bps_est
+            <input id="slipBps" type="number" step="1" min="0" placeholder="5" />
+          </label>
+          <label>
+            market.bar_freq_minutes (optional)
+            <input id="marketBarFreq" type="number" step="1" min="1" placeholder="(leave blank)" />
+          </label>
+        </div>
+        <div class="row">
+          <label>
+            market.lookback_minutes (optional)
+            <input id="marketLookback" type="number" step="1" min="1" placeholder="(leave blank)" />
+          </label>
+          <label>
+            (reserved)
+            <input disabled placeholder="future" />
+          </label>
+        </div>
+
         <div class="btns">
-          <button id="btnOnce" class="primary">Execute (Call Once)</button>
+          <button id="btnOnce" class="primary">Call Once</button>
           <button id="btnStart" class="primary">Start Auto</button>
           <button id="btnStop" class="danger" disabled>Stop Auto</button>
-          <button id="btnClear" title="Clear output only">Clear Output</button>
+          <button id="btnClear" class="ghost" title="Clear output only">Clear Output</button>
         </div>
 
         <div class="status" id="statusBox">
@@ -204,7 +399,17 @@
         </div>
 
         <div class="muted">
-          This page posts <code>TradingContextIn</code> payload to <code>/execute/{symbol}</code>.
+          This page posts <code>TradingContextIn</code> payload to
+          <code id="routeLabel">/execute/{symbol}</code>
+          (or <code>/signal/{symbol}</code> in Signal mode).
+        </div>
+
+        <div class="muted">
+          Summary rules:
+          <ul style="margin:6px 0 0 18px; padding:0; line-height: 1.45;">
+            <li>Counts only <b>accepted paper</b> trades: <code>route=execute</code>, <code>ok=true</code>, <code>paper=true</code>, <code>action=BUY/SELL</code>, and <code>lots&gt;0</code>.</li>
+            <li>PnL is computed in frontend using FIFO matching. If no fill price is provided, it falls back to snapshot last price (less accurate).</li>
+          </ul>
         </div>
       </div>
     </div>
@@ -219,7 +424,34 @@
   </div>
 
   <div class="card">
-    <h2>History (latest 30)</h2>
+    <h2>History (latest 30) + Intraday Paper Summary</h2>
+
+    <div class="summaryWrap">
+      <div id="summaryNote" class="muted">Summary updates after each successful /execute call (paper accepted).</div>
+      <div id="summaryBar" class="summaryGrid">
+        <div class="kv">
+          <div class="k">Accepted paper trades</div>
+          <div class="v">—</div>
+          <div class="s muted">execute ok=true paper=true</div>
+        </div>
+        <div class="kv">
+          <div class="k">Net lots / shares</div>
+          <div class="v">—</div>
+          <div class="s muted">BUY lots - SELL lots</div>
+        </div>
+        <div class="kv">
+          <div class="k">Realized PnL (CNY)</div>
+          <div class="v">—</div>
+          <div class="s muted">FIFO matched</div>
+        </div>
+        <div class="kv">
+          <div class="k">Unrealized PnL (CNY)</div>
+          <div class="v">—</div>
+          <div class="s muted">Open lots vs last price</div>
+        </div>
+      </div>
+    </div>
+
     <div id="history" class="historyList">(empty)</div>
   </div>
 </div>
@@ -247,7 +479,6 @@
   function normalizeNowTs(input) {
     const s = String(input || "").trim();
     if (!s) return "";
-
     if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) return s;
 
     const d = new Date(s);
@@ -262,7 +493,6 @@
       const get = (type) => parts.find(p => p.type === type)?.value ?? "";
       return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")}`;
     }
-
     return s;
   }
 
@@ -347,10 +577,90 @@
     }
   }
 
+  function extractLotsFromResponse(data) {
+    const v =
+      pick(data, ["lots"]) ??
+      pick(data, ["executed_lots"]) ??
+      pick(data, ["requested_lots"]) ??
+      pick(data, ["suggested_lots"]) ??
+      pick(data?.details?.signal, ["suggested_lots"]) ??
+      null;
+
+    const n = (v === null || v === undefined) ? null : Number(v);
+    return Number.isFinite(n) ? Math.floor(n) : null;
+  }
+
+  function extractSharesFromResponse(data) {
+    const v =
+      pick(data, ["shares"]) ??
+      pick(data, ["executed_shares"]) ??
+      pick(data, ["requested_shares"]) ??
+      null;
+    const n = (v === null || v === undefined) ? null : Number(v);
+    return Number.isFinite(n) ? Math.floor(n) : null;
+  }
+
+  function extractCallPriceFromResponse(root) {
+    const v =
+      pick(root, ["fill_price", "filled_price", "exec_price", "execution_price", "price"]) ??
+      pick(root?.details, ["fill_price", "filled_price", "exec_price", "execution_price", "price"]) ??
+      pick(root?.details?.execution, ["fill_price", "filled_price", "exec_price", "price"]) ??
+      pick(root?.details?.order, ["fill_price", "filled_price", "exec_price", "price"]) ??
+      pick(root?.details?.snapshot, ["last_price"]) ??
+      pick(root?.details?.snapshot, ["last"]) ??
+      null;
+
+    const n = (v === null || v === undefined) ? null : Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function extractLastPriceFromSnapshot(root) {
+    const snap =
+      pick(root?.details, ["snapshot"]) ||
+      pick(root, ["snapshot"]) ||
+      root?.details?.snapshot ||
+      null;
+
+    const v =
+      pick(snap, ["last_price", "last", "close", "price"]) ??
+      null;
+
+    const n = (v === null || v === undefined) ? null : Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function formatCny(x) {
+    if (x === null || x === undefined || !Number.isFinite(Number(x))) return "—";
+    const n = Number(x);
+    const sign = n > 0 ? "+" : "";
+    return sign + n.toFixed(2);
+  }
+
   // -----------------------------
-  // Persistence
+  // Mode / route selection
   // -----------------------------
-  const LS_KEY = "xtrader_execute_ui_v2";
+  const MODE_KEY = "xtrader_trading_ui_mode_v1"; // "execute" | "signal"
+  let mode = localStorage.getItem(MODE_KEY) || "execute";
+
+  function applyModeUI() {
+    const isExec = mode === "execute";
+    $("modeExecute").classList.toggle("active", isExec);
+    $("modeSignal").classList.toggle("active", !isExec);
+    $("routeLabel").textContent = isExec ? "/execute/{symbol}" : "/signal/{symbol}";
+    $("btnOnce").textContent = isExec ? "Execute (Call Once)" : "Signal (Call Once)";
+    $("btnStart").textContent = isExec ? "Start Auto Execute" : "Start Auto Signal";
+  }
+
+  function setMode(next) {
+    mode = (next === "signal") ? "signal" : "execute";
+    localStorage.setItem(MODE_KEY, mode);
+    applyModeUI();
+  }
+
+  // -----------------------------
+  // Persistence (form)
+  // -----------------------------
+  const LS_KEY = "xtrader_trading_ui_v3";
   function saveForm() {
     const data = {
       symbol: $("symbol").value,
@@ -360,6 +670,14 @@
       upl: $("upl").value,
       nowTs: $("nowTs").value,
       freqSec: $("freqSec").value,
+      tzName: $("tzName").value,
+      lotSize: $("lotSize").value,
+      maxOrderShares: $("maxOrderShares").value,
+      feesBps: $("feesBps").value,
+      slipBps: $("slipBps").value,
+      marketBarFreq: $("marketBarFreq").value,
+      marketLookback: $("marketLookback").value,
+      mode,
     };
     localStorage.setItem(LS_KEY, JSON.stringify(data));
   }
@@ -376,11 +694,19 @@
       $("upl").value = d.upl ?? "";
       $("nowTs").value = d.nowTs ?? "";
       $("freqSec").value = d.freqSec ?? "";
+      $("tzName").value = d.tzName ?? "";
+      $("lotSize").value = d.lotSize ?? "";
+      $("maxOrderShares").value = d.maxOrderShares ?? "";
+      $("feesBps").value = d.feesBps ?? "";
+      $("slipBps").value = d.slipBps ?? "";
+      $("marketBarFreq").value = d.marketBarFreq ?? "";
+      $("marketLookback").value = d.marketLookback ?? "";
+      if (d.mode) mode = d.mode;
     } catch {}
   }
 
   // -----------------------------
-  // Payload builder
+  // Payload builder (NEW ROUTES)
   // -----------------------------
   function buildPayload() {
     const account_state = {
@@ -391,9 +717,847 @@
     };
 
     const now_ts_user = normalizeNowTs($("nowTs").value);
+
+    const opt = {};
+    const tzName = String($("tzName").value || "").trim();
+    const lotSize = safeNumber($("lotSize").value, null);
+    const maxOrderShares = safeNumber($("maxOrderShares").value, null);
+    const feesBps = safeNumber($("feesBps").value, null);
+    const slipBps = safeNumber($("slipBps").value, null);
+
+    if (tzName) opt.timezone_name = tzName;
+    if (lotSize !== null) opt.lot_size = Math.max(1, Math.floor(lotSize));
+    if (maxOrderShares !== null) opt.max_order_shares = Math.max(0, Math.floor(maxOrderShares));
+    if (feesBps !== null) opt.fees_bps_est = Math.max(0, Math.floor(feesBps));
+    if (slipBps !== null) opt.slippage_bps_est = Math.max(0, Math.floor(slipBps));
+
+    const market = {};
+    const mbf = safeNumber($("marketBarFreq").value, null);
+    const mlb = safeNumber($("marketLookback").value, null);
+    if (mbf !== null) market.bar_freq_minutes = Math.max(1, Math.floor(mbf));
+    if (mlb !== null) market.lookback_minutes = Math.max(1, Math.floor(mlb));
+    if (Object.keys(market).length) opt.market = market;
+
+    const payload = { account_state };
+    if (now_ts_user) payload.now_ts = now_ts_user;
+    if (Object.keys(opt).length) payload.options = opt;
+
+    return payload;
+  }
+
+  function effectiveLotSizeFromForm() {
+    const n = safeNumber($("lotSize").value, null);
+    if (n === null) return 100;
+    return Math.max(1, Math.floor(n));
+  }
+   
+  // Parse "YYYY-MM-DD HH:MM:SS" as Asia/Shanghai time into epoch ms
+  function parseShanghaiTsMs(s) {
+    if (!s) return null;
+    const m = String(s).trim().match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/);
+    if (!m) {
+      const d = new Date(String(s));
+      return isNaN(d.getTime()) ? null : d.getTime();
+    }
+    const yyyy = Number(m[1]);
+    const MM = Number(m[2]);
+    const dd = Number(m[3]);
+    const hh = Number(m[4]);
+    const mi = Number(m[5]);
+    const ss = Number(m[6]);
+    // Shanghai is UTC+8
+    return Date.UTC(yyyy, MM - 1, dd, hh - 8, mi, ss);
+  }
+
+  // -----------------------------
+  // Intraday summary (DB-driven, FIFO on DB records)
+  // -----------------------------
+
+  function isDbAcceptedPaperTrade(r) {
+    // DB row acceptance: ok=true and action BUY/SELL and lots>0.
+    // "paper=true" is not in DB rows in your current schema; in practice,
+    // this DB table is already "paper broker results". If later you add a "paper" column,
+    // just AND it here.
+    if (!r) return false;
+    const action = normalizeAction(r.action);
+    if (action !== "BUY" && action !== "SELL") return false;
+
+    const ok = (r.ok === true) || (String(r.ok) === "1") || (Number(r.ok) === 1);
+    if (!ok) return false;
+
+    const lots = Number(r.suggested_lots);
+    if (!Number.isFinite(lots) || lots <= 0) return false;
+
+    // Optional: require status to look like executed/filled if you store those
+    // const st = String(r.status || "").toUpperCase();
+    // if (!(st.includes("EXEC") || st.includes("FILLED") || st.includes("DONE") || st.includes("OK"))) return false;
+
+    return true;
+  }
+
+  function sortDbTradesChronologically(records) {
+    const arr = records.slice();
+    arr.sort((a, b) => {
+      const ta = parseShanghaiTsMs(a.decision_ts) ?? 0;
+      const tb = parseShanghaiTsMs(b.decision_ts) ?? 0;
+      return ta - tb;
+    });
+    return arr;
+  }
+
+  function getLastPriceHintFromDb(records) {
+    // If you later include snapshot_json with last_price, you can parse it here.
+    // For now, we only use executed_price_cny for FIFO, and last price is "missing".
+    return null;
+  }
+
+  function computeIntradaySummaryFromDb(symbol, dbRecords) {
+    const sym = String(symbol || "").trim();
+    const rows = Array.isArray(dbRecords) ? dbRecords : [];
+
+    // Filter + sort
+    const trades = sortDbTradesChronologically(
+      rows.filter(r => String(r.symbol || sym || "") === sym).filter(isDbAcceptedPaperTrade)
+    );
+
+    // FIFO inventory queue: [{ lots, price, lotSize }]
+    const queue = [];
+
+    let acceptedCount = 0;
+    let buyLotsTotal = 0;
+    let sellLotsTotal = 0;
+
+    let buySharesTotal = 0;
+    let sellSharesTotal = 0;
+
+    let realized = 0;
+    let realizedFee = 0;
+
+    let winSegments = 0;
+    let loseSegments = 0;
+    let flatSegments = 0;
+
+    let missingBuyPxLots = 0;
+    let missingSellPxLots = 0;
+
+    for (const t of trades) {
+      acceptedCount += 1;
+
+      const action = normalizeAction(t.action);
+      const lots = Math.max(0, Math.floor(Number(t.suggested_lots)));
+      if (!lots) continue;
+
+      const lotSize = Number.isFinite(Number(t.lot_size)) ? Math.max(1, Math.floor(Number(t.lot_size))) : 100;
+
+      // Shares: prefer explicit suggested_shares; else lots * lotSize
+      const shares = Number.isFinite(Number(t.suggested_shares))
+        ? Math.max(0, Math.floor(Number(t.suggested_shares)))
+        : (lots * lotSize);
+
+      // Prices:
+      // - Prefer executed_price_cny (DB).
+      // - If missing, we cannot compute PnL for those legs.
+      const px = Number.isFinite(Number(t.executed_price_cny)) ? Number(t.executed_price_cny) : null;
+
+      // Fees/PnL from DB (optional):
+      // - fees_cny might be per-trade
+      // - realized_pnl_cny might already be computed by backend
+      // We keep FIFO as the primary realized PnL, but we can also show fee sum separately.
+      const fee = Number.isFinite(Number(t.fees_cny)) ? Number(t.fees_cny) : 0;
+      realizedFee += fee;
+
+      if (action === "BUY") {
+        buyLotsTotal += lots;
+        buySharesTotal += shares;
+
+        if (px === null) missingBuyPxLots += lots;
+
+        queue.push({
+          lots,
+          price: px,
+          lotSize,
+          sharesPerLot: lotSize
+        });
+      } else if (action === "SELL") {
+        sellLotsTotal += lots;
+        sellSharesTotal += shares;
+
+        if (px === null) missingSellPxLots += lots;
+
+        let remainingLots = lots;
+        const sellPx = px;
+
+        while (remainingLots > 0 && queue.length > 0) {
+          const head = queue[0];
+          const matchLots = Math.min(remainingLots, head.lots);
+
+          const buyPx = head.price;
+          const sharesPerLot = head.sharesPerLot || 100;
+          const matchShares = matchLots * sharesPerLot;
+
+          if (buyPx !== null && sellPx !== null) {
+            const seg = (sellPx - buyPx) * matchShares;
+            realized += seg;
+            if (seg > 0) winSegments += 1;
+            else if (seg < 0) loseSegments += 1;
+            else flatSegments += 1;
+          }
+
+          head.lots -= matchLots;
+          remainingLots -= matchLots;
+
+          if (head.lots <= 0) queue.shift();
+        }
+
+        // If sells exceed inventory, excess is ignored for PnL (no inventory to match).
+      }
+    }
+
+    // Open inventory
+    let openLots = 0;
+    let openShares = 0;
+    let openCost = 0;
+    let openLotsMissingPx = 0;
+
+    for (const q of queue) {
+      if (!q || q.lots <= 0) continue;
+      openLots += q.lots;
+      const sharesPerLot = q.sharesPerLot || 100;
+      const sh = q.lots * sharesPerLot;
+      openShares += sh;
+
+      if (q.price !== null) openCost += (q.price * sh);
+      else openLotsMissingPx += q.lots;
+    }
+
+    // Unrealized needs "last price". We don't have it from DB right now.
+    const lastPrice = getLastPriceHintFromDb(rows);
+    let unrealized = null;
+    let total = null;
+    if (Number.isFinite(Number(lastPrice))) {
+      const lp = Number(lastPrice);
+      const mktValue = lp * openShares;
+      unrealized = mktValue - openCost;
+      total = realized + unrealized;
+    }
+
+    const netLots = buyLotsTotal - sellLotsTotal;
+    // Net shares exact: we compute from buy/sell shares totals (more accurate than netLots * 100)
+    const netSharesExact = buySharesTotal - sellSharesTotal;
+
     return {
-      account_state,
-      now_ts: now_ts_user ? now_ts_user : shanghaiNowYmdHms(),
+      acceptedCount,
+      buyLotsTotal,
+      sellLotsTotal,
+      buySharesTotal,
+      sellSharesTotal,
+      netLots,
+      netSharesExact,
+
+      openLots,
+      openShares,
+
+      realized,
+      realizedFee,
+      unrealized,
+      total,
+
+      winSegments,
+      loseSegments,
+      flatSegments,
+
+      missingBuyPxLots,
+      missingSellPxLots,
+      openLotsMissingPx,
+      lastPrice
+    };
+  }
+
+  function renderSummaryFromDb(symbol, dbRecords) {
+    const sym = String(symbol || "").trim();
+    const bar = $("summaryBar");
+    const note = $("summaryNote");
+    if (!bar || !note) return;
+
+    if (!sym) {
+      note.textContent = "Type a symbol to compute intraday summary (DB-driven).";
+      return;
+    }
+
+    const s = computeIntradaySummaryFromDb(sym, dbRecords);
+
+    const unreal = (s.unrealized === null) ? "—" : formatCny(s.unrealized);
+    const total = (s.total === null) ? "—" : formatCny(s.total);
+
+    const pxNote = (s.missingBuyPxLots || s.missingSellPxLots || s.openLotsMissingPx)
+      ? `<span class="pill bad">missing prices</span>
+         <span class="muted">buy-missing=${escapeHtml(String(s.missingBuyPxLots))} lots • sell-missing=${escapeHtml(String(s.missingSellPxLots))} lots • open-missing=${escapeHtml(String(s.openLotsMissingPx))} lots</span>`
+      : `<span class="pill ok">prices ok</span>`;
+
+    note.innerHTML = `
+      Symbol <span class="pill info"><code>${escapeHtml(sym)}</code></span>
+      • Updated at <span class="pill info">${escapeHtml(shanghaiNowYmdHms())}</span>
+      • Source: <span class="pill info">DB /trade_history</span>
+      • ${pxNote}
+    `;
+
+    bar.innerHTML = `
+      <div class="kv">
+        <div class="k">Accepted paper trades (DB)</div>
+        <div class="v">${escapeHtml(String(s.acceptedCount))}</div>
+        <div class="s muted">win=${escapeHtml(String(s.winSegments))} • lose=${escapeHtml(String(s.loseSegments))} • flat=${escapeHtml(String(s.flatSegments))}</div>
+      </div>
+      <div class="kv">
+        <div class="k">Net lots / shares (exact)</div>
+        <div class="v">${escapeHtml(String(s.netLots))} lots</div>
+        <div class="s muted">${escapeHtml(String(s.netSharesExact))} shares (from suggested_shares or lots×lot_size)</div>
+      </div>
+      <div class="kv">
+        <div class="k">Realized PnL (CNY)</div>
+        <div class="v">${escapeHtml(formatCny(s.realized))}</div>
+        <div class="s muted">FIFO on executed_price_cny • fees sum=${escapeHtml(formatCny(s.realizedFee))}</div>
+      </div>
+      <div class="kv">
+        <div class="k">Unrealized / Total (CNY)</div>
+        <div class="v">${escapeHtml(unreal)} <span class="muted">/</span> ${escapeHtml(total)}</div>
+        <div class="s muted">open=${escapeHtml(String(s.openLots))} lots • ${escapeHtml(String(s.openShares))} shares • last price: ${s.lastPrice === null ? "missing" : escapeHtml(String(Number(s.lastPrice).toFixed(2)))}</div>
+      </div>
+    `;
+  }
+
+  // -----------------------------
+  // Candlestick Renderer (Canvas) + markers + hover tooltip hit-test
+  // -----------------------------
+  function parseBarTsMs(ts) {
+    if (!ts) return null;
+    const s = String(ts);
+    const d1 = new Date(s);
+    if (!isNaN(d1.getTime())) return d1.getTime();
+    const d2 = new Date(s.replace(" ", "T"));
+    if (!isNaN(d2.getTime())) return d2.getTime();
+    return null;
+  }
+
+  function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
+
+  function extractBarsFromResponse(root) {
+    const snap = pick(root?.details, ["snapshot"]) || pick(root, ["snapshot"]) || root?.details?.snapshot;
+    const bars = snap?.recent_bars || snap?.recentBars || [];
+    return Array.isArray(bars) ? bars : [];
+  }
+
+  function buildOhlc(bars) {
+    const out = [];
+    for (const b of bars) {
+      const tms = parseBarTsMs(b?.ts);
+      const o = Number(b?.open), h = Number(b?.high), l = Number(b?.low), c = Number(b?.close);
+      if (!Number.isFinite(o) || !Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(c) || tms === null) continue;
+      out.push({ t: tms, o, h, l, c, v: Number(b?.volume) });
+    }
+    out.sort((a,b) => a.t - b.t);
+    return out;
+  }
+
+  function ensureCanvasHiDpi(canvas, cssW, cssH) {
+    const dpr = window.devicePixelRatio || 1;
+    canvas.style.width = cssW + "px";
+    canvas.style.height = cssH + "px";
+    canvas.width = Math.max(1, Math.floor(cssW * dpr));
+    canvas.height = Math.max(1, Math.floor(cssH * dpr));
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return ctx;
+  }
+
+  function drawActionMarker(ctx, x, y, action, opts = {}) {
+    const a = normalizeAction(action);
+    if (a !== "BUY" && a !== "SELL") return;
+
+    const fill = (a === "SELL")
+      ? "rgba(255, 107, 107, .95)"   // red
+      : "rgba(110, 168, 254, .95)"; // blue
+
+    const stroke = "rgba(0,0,0,.55)";
+    const r = Number.isFinite(Number(opts.radius)) ? Number(opts.radius) : 7;
+
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = fill;
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = stroke;
+    ctx.stroke();
+
+    ctx.fillStyle = "rgba(0,0,0,.85)";
+    ctx.font = "11px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(a === "SELL" ? "S" : "B", x, y + 0.5);
+
+    ctx.textAlign = "start";
+    ctx.textBaseline = "alphabetic";
+  }
+
+  function xOfTs(ohlc, targetMs, padL, W) {
+    const n = ohlc.length;
+    if (!n) return null;
+    const t0 = ohlc[0].t;
+    const t1 = ohlc[n - 1].t;
+    if (!Number.isFinite(t0) || !Number.isFinite(t1) || t1 <= t0) return null;
+
+    const t = clamp(targetMs ?? t1, t0, t1);
+    const frac = (t - t0) / (t1 - t0);
+    return padL + frac * W;
+  }
+
+  function applyMarkerCollisionOffsets(markersPx, minDist = 12) {
+    const placed = [];
+    for (const m of markersPx) {
+      let { x, y } = m;
+      if (!(Number.isFinite(x) && Number.isFinite(y))) continue;
+
+      let tries = 0;
+      while (tries < 10) {
+        let collided = false;
+        for (const p of placed) {
+          const dx = x - p.x;
+          const dy = y - p.y;
+          if (dx*dx + dy*dy < minDist*minDist) {
+            collided = true;
+            x += 10;
+            y -= 10;
+            break;
+          }
+        }
+        if (!collided) break;
+        tries++;
+      }
+
+      placed.push({ ...m, x, y });
+    }
+    return placed;
+  }
+
+  function dist2(ax, ay, bx, by) {
+    const dx = ax - bx;
+    const dy = ay - by;
+    return dx*dx + dy*dy;
+  }
+
+  // Global for hover hit-test (updated each draw)
+  window.__markerHit = {
+    canvas: null,
+    markersPx: [], // {x,y,r, action, tsShanghai, price, lots}
+    tipEl: null
+  };
+
+  function showMarkerTip(canvas, marker, clientX, clientY) {
+    const wrap = canvas.parentElement;
+    const tip = window.__markerHit.tipEl;
+    if (!wrap || !tip || !marker) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+
+    tip.innerHTML = `
+      <div class="a">
+        <span class="dot ${marker.action === "SELL" ? "sell" : "buy"}"></span>
+        ${escapeHtml(marker.action)} @ ${escapeHtml(marker.price.toFixed(2))}
+        ${marker.lots != null ? `<span class="muted"> • ${escapeHtml(String(marker.lots))} lots</span>` : ``}
+      </div>
+      <div class="sub">${escapeHtml(marker.tsShanghai || "—")}</div>
+    `;
+    tip.style.left = `${x}px`;
+    tip.style.top = `${y}px`;
+    tip.style.display = "block";
+  }
+
+  function hideMarkerTip() {
+    const tip = window.__markerHit.tipEl;
+    if (tip) tip.style.display = "none";
+  }
+
+  function bindMarkerHover(canvas) {
+    if (canvas.__markerHoverBound) return;
+    canvas.__markerHoverBound = true;
+
+    canvas.addEventListener("mousemove", (ev) => {
+      const hit = window.__markerHit;
+      if (!hit || hit.canvas !== canvas) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const mx = ev.clientX - rect.left;
+      const my = ev.clientY - rect.top;
+
+      let best = null;
+      let bestD2 = Infinity;
+
+      for (const m of hit.markersPx) {
+        const r = m.r ?? 8;
+        const d2 = dist2(mx, my, m.x, m.y);
+        if (d2 <= (r + 6) * (r + 6) && d2 < bestD2) {
+          bestD2 = d2;
+          best = m;
+        }
+      }
+
+      if (best) showMarkerTip(canvas, best, ev.clientX, ev.clientY);
+      else hideMarkerTip();
+    });
+
+    canvas.addEventListener("mouseleave", () => hideMarkerTip());
+    canvas.addEventListener("touchstart", (ev) => {
+      const t = ev.touches?.[0];
+      if (!t) return;
+      const hit = window.__markerHit;
+      if (!hit || hit.canvas !== canvas) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const mx = t.clientX - rect.left;
+      const my = t.clientY - rect.top;
+
+      let best = null;
+      let bestD2 = Infinity;
+
+      for (const m of hit.markersPx) {
+        const r = m.r ?? 8;
+        const d2 = dist2(mx, my, m.x, m.y);
+        if (d2 <= (r + 8) * (r + 8) && d2 < bestD2) {
+          bestD2 = d2;
+          best = m;
+        }
+      }
+
+      if (best) {
+        showMarkerTip(canvas, best, t.clientX, t.clientY);
+        setTimeout(hideMarkerTip, 1800);
+      }
+    }, { passive: true });
+  }
+
+  function buildMarkersFromDbRecords(symbol, records, maxN = 12) {
+    const sym = String(symbol || "").trim();
+    if (!sym) return [];
+
+    const rows = Array.isArray(records) ? records : [];
+
+    // accepted paper trades only (same as summary)
+    const accepted = rows
+      .filter(r => String(r.symbol || sym) === sym)
+      .filter(isDbAcceptedPaperTrade);
+
+    // chronological -> take last maxN
+    const chrono = sortDbTradesChronologically(accepted);
+    const tail = chrono.slice(Math.max(0, chrono.length - maxN));
+
+    const out = [];
+    for (const r of tail) {
+      const act = normalizeAction(r.action);
+      if (act !== "BUY" && act !== "SELL") continue;
+
+      // Prefer executed_price_cny; if missing, we can fall back to null and later default to last candle close
+      const px = Number.isFinite(Number(r.executed_price_cny)) ? Number(r.executed_price_cny) : null;
+
+      // lots/shares for tooltip
+      const lots = Number.isFinite(Number(r.suggested_lots)) ? Math.floor(Number(r.suggested_lots)) : null;
+
+      out.push({
+        action: act,
+        callTsShanghai: r.decision_ts || null,   // already Shanghai "YYYY-MM-DD HH:MM:SS"
+        callPrice: px,                           // may be null -> candle renderer will fallback to last.c
+        lots
+      });
+    }
+
+    return out;
+  }
+
+  /**
+   * drawCandles(canvas, ohlc, markers?)
+   * markers = [{ action: "BUY"|"SELL", callTsShanghai: "YYYY-MM-DD HH:MM:SS", callPrice?: number, lots?: number }]
+   */
+  function drawCandles(canvas, ohlc, markers=[]) {
+    const cssW = canvas.clientWidth || 800;
+    const cssH = canvas.clientHeight || 260;
+    const ctx = ensureCanvasHiDpi(canvas, cssW, cssH);
+
+    ctx.clearRect(0, 0, cssW, cssH);
+
+    if (!ohlc || ohlc.length < 2) {
+      ctx.globalAlpha = 0.85;
+      ctx.fillStyle = "rgba(232,238,252,.85)";
+      ctx.font = "12px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif";
+      ctx.fillText("Not enough bars to draw candles.", 12, 20);
+      return;
+    }
+
+    const padL = 42, padR = 10, padT = 10, padB = 24;
+    const W = cssW - padL - padR;
+    const H = cssH - padT - padB;
+
+    const n = ohlc.length;
+    const lows = ohlc.map(x => x.l);
+    const highs = ohlc.map(x => x.h);
+    let pMin = Math.min(...lows);
+    let pMax = Math.max(...highs);
+    if (!(Number.isFinite(pMin) && Number.isFinite(pMax)) || pMax <= pMin) {
+      pMin = ohlc[0].l;
+      pMax = ohlc[0].h + 1e-6;
+    }
+
+    const m = (pMax - pMin) * 0.03;
+    pMin -= m;
+    pMax += m;
+
+    const yOf = (p) => padT + (pMax - p) * (H / (pMax - pMin));
+    const xStep = W / Math.max(1, n - 1);
+    const bodyW = clamp(xStep * 0.55, 3, 14);
+
+    ctx.strokeStyle = "rgba(255,255,255,.08)";
+    ctx.lineWidth = 1;
+
+    ctx.fillStyle = "rgba(232,238,252,.70)";
+    ctx.font = "11px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif";
+
+    const gridN = 4;
+    for (let i = 0; i <= gridN; i++) {
+      const y = padT + (H * i / gridN);
+      ctx.beginPath();
+      ctx.moveTo(padL, y);
+      ctx.lineTo(padL + W, y);
+      ctx.stroke();
+
+      const price = pMax - (pMax - pMin) * (i / gridN);
+      ctx.fillText(price.toFixed(2), 6, y + 4);
+    }
+
+    const vN = Math.min(6, n - 1);
+    for (let i = 0; i <= vN; i++) {
+      const idx = Math.floor((n - 1) * i / vN);
+      const x = padL + idx * xStep;
+      ctx.beginPath();
+      ctx.moveTo(x, padT);
+      ctx.lineTo(x, padT + H);
+      ctx.stroke();
+    }
+
+    const upFill = "rgba(64, 192, 128, .70)";
+    const upStroke = "rgba(64, 192, 128, .90)";
+    const dnFill = "rgba(255, 107, 107, .60)";
+    const dnStroke = "rgba(255, 107, 107, .90)";
+    const wickStroke = "rgba(232,238,252,.75)";
+
+    for (let i = 0; i < n; i++) {
+      const b = ohlc[i];
+      const x = padL + i * xStep;
+
+      const yH = yOf(b.h);
+      const yL = yOf(b.l);
+      const yO = yOf(b.o);
+      const yC = yOf(b.c);
+
+      ctx.strokeStyle = wickStroke;
+      ctx.beginPath();
+      ctx.moveTo(x, yH);
+      ctx.lineTo(x, yL);
+      ctx.stroke();
+
+      const isUp = b.c >= b.o;
+      const yTop = Math.min(yO, yC);
+      const yBot = Math.max(yO, yC);
+      const h = Math.max(1, yBot - yTop);
+
+      ctx.fillStyle = isUp ? upFill : dnFill;
+      ctx.strokeStyle = isUp ? upStroke : dnStroke;
+
+      const rx = x - bodyW / 2;
+      ctx.fillRect(rx, yTop, bodyW, h);
+      ctx.strokeRect(rx, yTop, bodyW, h);
+    }
+
+    ctx.fillStyle = "rgba(232,238,252,.70)";
+    ctx.font = "11px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif";
+    const labelN = Math.min(5, n - 1);
+    for (let i = 0; i <= labelN; i++) {
+      const idx = Math.floor((n - 1) * i / labelN);
+      const t = new Date(ohlc[idx].t);
+      const hh = String(t.getHours()).padStart(2, "0");
+      const mm = String(t.getMinutes()).padStart(2, "0");
+      const x = padL + idx * xStep;
+      ctx.fillText(`${hh}:${mm}`, x - 14, padT + H + 18);
+    }
+
+    const last = ohlc[n - 1];
+    const yLast = yOf(last.c);
+    ctx.strokeStyle = "rgba(110,168,254,.55)";
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(padL, yLast);
+    ctx.lineTo(padL + W, yLast);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = "rgba(110,168,254,.95)";
+    ctx.fillText(`Last: ${last.c.toFixed(2)}`, padL + 8, yLast - 6);
+
+    // ---- MULTI action markers (BUY/SELL) WITHOUT clutter labels ----
+    const ms = Array.isArray(markers) ? markers : [];
+
+    const markersPxRaw = [];
+    for (let i = 0; i < ms.length; i++) {
+      const mk = ms[i];
+      const act = normalizeAction(mk?.action);
+      if (act !== "BUY" && act !== "SELL") continue;
+
+      const callMs = parseShanghaiTsMs(mk?.callTsShanghai);
+      const x = xOfTs(ohlc, callMs, padL, W);
+      if (x === null) continue;
+
+      const price = Number.isFinite(Number(mk?.callPrice))
+        ? Number(mk.callPrice)
+        : last.c;
+
+      const y = yOf(price);
+      if (!Number.isFinite(y)) continue;
+
+      const isLast = (i === ms.length - 1);
+      const r = isLast ? 8 : 6;
+
+      markersPxRaw.push({
+        x, y, r,
+        action: act,
+        tsShanghai: mk?.callTsShanghai || "—",
+        price,
+        lots: (mk?.lots !== undefined && mk?.lots !== null) ? mk.lots : null,
+        isLast
+      });
+    }
+
+    const markersPx = applyMarkerCollisionOffsets(markersPxRaw, 12);
+
+    for (const m of markersPx) {
+      drawActionMarker(ctx, m.x, m.y, m.action, { radius: m.r });
+    }
+
+    window.__markerHit.canvas = canvas;
+    window.__markerHit.markersPx = markersPx;
+  }
+
+  // -----------------------------
+  // Foldable chart state
+  // -----------------------------
+  const CHART_FOLD_KEY = "xtrader_chart_folded_v1";
+
+  function isChartFolded() {
+    return localStorage.getItem(CHART_FOLD_KEY) === "1";
+  }
+
+  function setChartFolded(folded) {
+    localStorage.setItem(CHART_FOLD_KEY, folded ? "1" : "0");
+  }
+
+  function applyChartFoldUI() {
+    const card = $("chartCard");
+    if (!card) return;
+    card.classList.toggle("folded", isChartFolded());
+  }
+
+  function wireChartFoldToggle() {
+    const card = $("chartCard");
+    if (!card) return;
+    const top = card.querySelector(".chartTop");
+    if (!top) return;
+
+    top.onclick = () => {
+      const next = !isChartFolded();
+      setChartFolded(next);
+      applyChartFoldUI();
+      if (!next) {
+        const canvas = $("candleCanvas");
+        if (canvas && window.__lastCandleDraw) window.__lastCandleDraw();
+      }
+    };
+  }
+
+  function renderCandleChartIfAny(root, symbol) {
+    const barsRaw = extractBarsFromResponse(root);
+    const ohlc = buildOhlc(barsRaw);
+    if (!ohlc.length) return "";
+
+    const firstT = new Date(ohlc[0].t);
+    const lastT = new Date(ohlc[ohlc.length - 1].t);
+    const fmt = (d) => {
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+      const hh = String(d.getHours()).padStart(2, "0");
+      const mi = String(d.getMinutes()).padStart(2, "0");
+      return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+    };
+
+    return `
+      <div class="chartCard" id="chartCard">
+        <div class="chartTop" title="Click to fold/unfold">
+          <div class="title"><span class="chev">▾</span>Market Snapshot Candles</div>
+          <div class="meta">
+            <span class="pill info"><code>${escapeHtml(symbol || "—")}</code></span>
+            <span class="muted">bars=${ohlc.length} • ${escapeHtml(fmt(firstT))} → ${escapeHtml(fmt(lastT))}</span>
+          </div>
+        </div>
+        <div class="chartWrap">
+          <canvas id="candleCanvas" class="candle"></canvas>
+          <div id="markerTip" class="markerTip"></div>
+        </div>
+        <div class="chartHint">
+          Hover near a marker to see <span class="pill info">exact Shanghai timestamp</span>.
+          Click the title bar to fold.
+        </div>
+      </div>
+    `;
+  }
+
+  function drawChartAfterRender(root, meta) {
+    const canvas = $("candleCanvas");
+    if (!canvas) return;
+
+    window.__markerHit.tipEl = $("markerTip");
+    bindMarkerHover(canvas);
+
+    const ohlc = buildOhlc(extractBarsFromResponse(root));
+    const symbol = pick(root, ["symbol"]) || meta?.symbol || "";
+
+    const markers = buildMarkersFromDbRecords(symbol, historyRecords, 12);
+
+    const latestAction =
+      pick(root, ["action"]) ||
+      pick(root?.details?.signal, ["action"]) ||
+      null;
+
+    const latestTs =
+      pick(root, ["ts"]) ||
+      meta?.startedShanghai ||
+      null;
+
+    const latestPrice = extractCallPriceFromResponse(root);
+    const latestLots = extractLotsFromResponse(root);
+
+    if (normalizeAction(latestAction) === "BUY" || normalizeAction(latestAction) === "SELL") {
+      markers.push({
+        action: normalizeAction(latestAction),
+        callTsShanghai: latestTs,
+        callPrice: latestPrice,
+        lots: latestLots
+      });
+    }
+
+    const redraw = () => drawCandles(canvas, ohlc, markers);
+    window.__lastCandleDraw = redraw;
+
+    redraw();
+
+    window.onresize = () => {
+      if ($("candleCanvas")) redraw();
     };
   }
 
@@ -402,14 +1566,20 @@
   // -----------------------------
   function renderResponse(data, meta) {
     const root = data ?? {};
-    const action = pick(root, ["action"]) || pick(root?.details?.signal, ["action"]);
-    const ok = pick(root, ["ok"]);
-    const msg = pick(root, ["message", "detail"]) || "";
     const symbol = pick(root, ["symbol"]) || meta?.symbol || "—";
+
+    const isExecute = mode === "execute";
+
+    const action =
+      pick(root, ["action"]) ||
+      pick(root?.details?.signal, ["action"]);
+
+    const ok = pick(root, ["ok"]);
+    const msg = pick(root, ["message", "detail"]) || (isExecute ? "" : "(signal only)");
     const ts = pick(root, ["ts"]) || meta?.startedShanghai;
 
     const shares = pick(root, ["shares"]);
-    const lots = pick(root, ["lots"]) ?? pick(root?.details?.signal, ["suggested_lots"]);
+    const lots = pick(root, ["lots"]) ?? pick(root, ["suggested_lots"]) ?? pick(root?.details?.signal, ["suggested_lots"]);
     const paper = pick(root, ["paper"]);
 
     const rawJson = pretty(root);
@@ -417,11 +1587,11 @@
     const top = `
       <div class="respTop">
         <div class="respTitle">
-          <strong>Execute</strong>
+          <strong>${isExecute ? "Execute" : "Signal"}</strong>
           <span class="pill info"><code>${escapeHtml(symbol)}</code></span>
           ${actionPill(action)}
-          ${ok === true ? `<span class="pill ok">OK</span>` : ok === false ? `<span class="pill bad">FAIL</span>` : ``}
-          ${paper !== undefined ? `<span class="pill info">paper=${escapeHtml(String(paper))}</span>` : ``}
+          ${isExecute && ok === true ? `<span class="pill ok">OK</span>` : isExecute && ok === false ? `<span class="pill bad">FAIL</span>` : ``}
+          ${isExecute && paper !== undefined ? `<span class="pill info">paper=${escapeHtml(String(paper))}</span>` : ``}
         </div>
         <button class="copyBtn" id="copyRawBtn">Copy Raw JSON</button>
       </div>
@@ -437,32 +1607,39 @@
         <div class="kv">
           <div class="k">Message</div>
           <div class="v">${escapeHtml(String(msg || "—"))}</div>
-          <div class="s muted">Backend may include risk blocks / broker messages.</div>
+          <div class="s muted">${isExecute ? "Backend may include risk blocks / broker messages." : "Signal endpoint returns a signal object."}</div>
         </div>
         <div class="kv">
-          <div class="k">Lots</div>
+          <div class="k">${isExecute ? "Lots (executed/requested)" : "suggested_lots"}</div>
           <div class="v">${escapeHtml(lots === undefined ? "—" : String(lots))}</div>
-          <div class="s muted">Executed/requested lots from response.</div>
+          <div class="s muted">Lots unit = 手. HOLD should be 0.</div>
         </div>
         <div class="kv">
-          <div class="k">Shares</div>
-          <div class="v">${escapeHtml(shares === undefined ? "—" : String(shares))}</div>
-          <div class="s muted">Executed/requested shares from response.</div>
+          <div class="k">${isExecute ? "Shares" : "confidence"}</div>
+          <div class="v">${
+            isExecute
+              ? escapeHtml(shares === undefined ? "—" : String(shares))
+              : escapeHtml(pick(root, ["confidence"]) === undefined ? "—" : String(pick(root, ["confidence"])))
+          }</div>
+          <div class="s muted">${isExecute ? "Executed/requested shares from response." : "0..1 calibrated confidence."}</div>
         </div>
       </div>
     `;
 
-    const detailsSignal = pick(root?.details, ["signal"]);
+    const chartHtml = isExecute ? renderCandleChartIfAny(root, symbol) : "";
+
+    const detailsSignal = pick(root?.details, ["signal"]) || (isExecute ? null : root);
     const detailsSnapshot = pick(root?.details, ["snapshot"]);
 
     const extra = `
-      <details>
-        <summary>LLM Signal (details.signal)</summary>
+      ${chartHtml}
+      <details ${isExecute ? "" : "open"}>
+        <summary>${isExecute ? "LLM Signal (details.signal)" : "Signal JSON"}</summary>
         <pre>${escapeHtml(detailsSignal ? pretty(detailsSignal) : "(empty)")}</pre>
       </details>
       <details>
         <summary>Market Snapshot (details.snapshot)</summary>
-        <pre>${escapeHtml(detailsSnapshot ? pretty(detailsSnapshot) : "(empty)")}</pre>
+        <pre>${escapeHtml(detailsSnapshot ? pretty(detailsSnapshot) : "(empty) — only returned by /execute")}</pre>
       </details>
       <details open>
         <summary>Raw JSON</summary>
@@ -480,6 +1657,15 @@
         setTimeout(() => (btn.textContent = "Copy Raw JSON"), 1200);
       };
     }
+
+    // Execute chart rendering only (summary is DB-driven via refreshHistory -> renderHistoryFromBackend)
+    if (isExecute) {
+      applyChartFoldUI();
+      wireChartFoldToggle();
+      if (!isChartFolded()) drawChartAfterRender(root, meta);
+      else window.__lastCandleDraw = () => drawChartAfterRender(root, meta);
+    }
+
   }
 
   function renderError(errText, raw, meta) {
@@ -514,32 +1700,60 @@
   }
 
   // -----------------------------
-  // History (latest 30)
+  // History (BACKEND FIRST)
+  // GET /trade_history/{symbol}?now_ts=...&limit=...
   // -----------------------------
-  let history = [];
+  const HISTORY_LIMIT = 30;
+  let historyRecords = []; // records from backend
 
-  function pushHistory(entry) {
-    history.unshift(entry);
-    history = history.slice(0, 30);
+  function statusPillFromDbStatus(status) {
+    const s = String(status || "").toUpperCase();
+    // You can tune these labels to match your DB statuses
+    if (s.includes("FAIL") || s.includes("ERROR")) return `<span class="pill bad">${escapeHtml(s || "FAIL")}</span>`;
+    if (s.includes("OK") || s.includes("EXEC") || s.includes("DONE") || s.includes("FILLED")) return `<span class="pill ok">${escapeHtml(s || "OK")}</span>`;
+    return `<span class="pill info">${escapeHtml(s || "—")}</span>`;
+  }
 
+  function renderHistoryFromBackend(records) {
     const container = $("history");
-    if (!history.length) {
+    const rows = Array.isArray(records) ? records : [];
+    historyRecords = rows.slice(0, HISTORY_LIMIT);
+
+    if (!historyRecords.length) {
       container.textContent = "(empty)";
       return;
     }
 
-    container.innerHTML = history.map((h, idx) => {
-      const pill = h.ok ? `<span class="pill ok">OK</span>` : `<span class="pill bad">FAIL</span>`;
-      const sym = `<code>${escapeHtml(h.symbol || "—")}</code>`;
-      const action = h.action ? actionPill(h.action) : "";
-      const msg = h.msg ? escapeHtml(h.msg) : "";
+    container.innerHTML = historyRecords.map((r, idx) => {
+      const sym = `<code>${escapeHtml(String(r.symbol || $("symbol").value || "—").trim() || "—")}</code>`;
+
+      const ts = r.decision_ts || "—";
+      const action = r.action ? actionPill(r.action) : "";
+      const lots = (r.suggested_lots !== undefined && r.suggested_lots !== null)
+        ? `<span class="pill info">lots=${escapeHtml(String(r.suggested_lots))}</span>`
+        : "";
+      const shares = (r.suggested_shares !== undefined && r.suggested_shares !== null)
+        ? `<span class="pill info">shares=${escapeHtml(String(r.suggested_shares))}</span>`
+        : "";
+      const conf = (r.confidence !== undefined && r.confidence !== null)
+        ? `<span class="pill info">conf=${escapeHtml(String(r.confidence))}</span>`
+        : "";
+      const st = statusPillFromDbStatus(r.status);
+      const msg = r.message ? escapeHtml(String(r.message)) : "";
+
       return `
         <div class="histItem">
           <div class="histTop">
             <div class="histMeta">
-              ${pill} ${sym} ${action}
+              ${st}
+              <span class="pill info">db</span>
+              ${sym}
+              ${action}
+              ${lots}
+              ${shares}
+              ${conf}
               <span class="muted">•</span>
-              <span class="muted">${escapeHtml(h.tsShanghai || "—")}</span>
+              <span class="muted">${escapeHtml(String(ts))}</span>
             </div>
             <button class="copyBtn" data-idx="${idx}">Copy</button>
           </div>
@@ -551,22 +1765,77 @@
     container.querySelectorAll("button.copyBtn[data-idx]").forEach(btn => {
       btn.onclick = async () => {
         const idx = Number(btn.getAttribute("data-idx"));
-        const item = history[idx];
+        const item = historyRecords[idx];
         const payload = pretty(item);
         const ok = await copyToClipboard(payload);
         btn.textContent = ok ? "Copied!" : "Copy failed";
         setTimeout(() => (btn.textContent = "Copy"), 1200);
       };
     });
+
+    // DB-driven summary updates from the same records
+    renderSummaryFromDb(normalizeSymbol($("symbol").value), historyRecords);
+
+      // If candle exists, redraw markers (now DB-driven via historyRecords)
+    if ($("candleCanvas") && window.__lastCandleDraw && !isChartFolded()) {
+      window.__lastCandleDraw();
+    } 
+  }
+
+  async function fetchTradeHistoryFromBackend(symbol, limit = HISTORY_LIMIT) {
+    const sym = normalizeSymbol(symbol);
+    if (!sym) return { symbol: "", count: 0, records: [] };
+
+    // now_ts is REQUIRED by your FastAPI route
+    const nowTsUser = normalizeNowTs($("nowTs").value);
+    const nowTs = nowTsUser || shanghaiNowYmdHms();
+
+    const url =
+      `/trade_history/${encodeURIComponent(sym)}` +
+      `?now_ts=${encodeURIComponent(nowTs)}` +
+      `&limit=${encodeURIComponent(String(limit))}`;
+
+    const resp = await fetch(url, { method: "GET" });
+    const rawText = await resp.text();
+    let data;
+    try { data = JSON.parse(rawText); } catch { data = { raw: rawText }; }
+
+    if (!resp.ok) {
+      // Render error inside Response box but keep page usable
+      renderError(`History API failed: HTTP ${resp.status} ${resp.statusText}`, pretty(data), { symbol: sym });
+      return { symbol: sym, count: 0, records: [] };
+    }
+    return data;
+  }
+
+  async function refreshHistory(symbol) {
+    const sym = normalizeSymbol(symbol);
+    if (!sym) {
+      renderHistoryFromBackend([]);
+      return;
+    }
+    try {
+      const data = await fetchTradeHistoryFromBackend(sym, HISTORY_LIMIT);
+      renderHistoryFromBackend(data?.records || []);
+    } catch (e) {
+      renderError(`History fetch error: ${e}`, "", { symbol: sym });
+      renderHistoryFromBackend([]);
+    }
   }
 
   // -----------------------------
-  // API call (no timeout; no-overlap auto)
+  // API call (no overlap auto)
   // -----------------------------
   let running = false;
   let timer = null;
 
-  async function callExecuteOnce() {
+  function currentRouteForSymbol(symbol) {
+    return (mode === "signal")
+      ? `/signal/${encodeURIComponent(symbol)}`
+      : `/execute/${encodeURIComponent(symbol)}`;
+  }
+
+  async function callOnce() {
     if (running) return;
     running = true;
 
@@ -581,14 +1850,13 @@
     }
 
     const payload = buildPayload();
-    const url = `/execute/${encodeURIComponent(symbol)}`;
+    const url = currentRouteForSymbol(symbol);
     const startedShanghai = shanghaiNowYmdHms();
 
     $("lastCall").textContent = startedShanghai;
     setRunState(timer ? "running" : "calling...");
 
     try {
-      // ✅ no AbortController => no client-side timeout
       const resp = await fetch(url, {
         method: "POST",
         headers: {"Content-Type": "application/json"},
@@ -605,14 +1873,10 @@
         setStatus(startedShanghai, msg);
 
         renderError(msg, pretty(data), { symbol, startedShanghai });
-        pushHistory({
-          tsShanghai: startedShanghai,
-          ok: false,
-          symbol,
-          msg: `${msg}\n${pretty(data)}`.slice(0, 1200),
-          status: resp.status,
-          response: data
-        });
+ 
+        // Backend-first history refresh (may or may not include failed attempts depending on your DB logic)
+        await refreshHistory(symbol);
+
         running = false;
         return;
       }
@@ -622,32 +1886,35 @@
 
       renderResponse(data, { symbol, startedShanghai });
 
-      const action = pick(data, ["action"]) || pick(data?.details?.signal, ["action"]);
-      const okVal = pick(data, ["ok"]);
-      const message = pick(data, ["message"]) || "";
+      // Backend-first history refresh (authoritative)
+      await refreshHistory(pick(data, ["symbol"]) || symbol);
 
-      pushHistory({
-        tsShanghai: startedShanghai,
-        ok: Boolean(okVal),
-        symbol: pick(data, ["symbol"]) || symbol,
-        action: normalizeAction(action),
-        msg: `${normalizeAction(action)} | ok=${String(okVal)} | ${String(message).slice(0, 160)}`.trim(),
-        response: data
-      });
+      const action =
+        pick(data, ["action"]) ||
+        pick(data?.details?.signal, ["action"]);
 
+      const okVal = (mode === "execute") ? Boolean(pick(data, ["ok"])) : true;
+
+      const message =
+        pick(data, ["message"]) ||
+        pick(data, ["detail"]) ||
+        (mode === "signal" ? String(pick(data, ["reason"]) || "").slice(0, 200) : "");
+
+      const lotsForHistory = extractLotsFromResponse(data);
+      const sharesForPoint = extractSharesFromResponse(data);
+
+      const callTsShanghai = pick(data, ["ts"]) || startedShanghai;
+      const callPrice = extractCallPriceFromResponse(data);
+
+      const paperVal = (mode === "execute") ? Boolean(pick(data, ["paper"])) : false;
+ 
     } catch (e) {
       const msg = `FETCH_ERROR: ${e}`;
       setRunState(timer ? "running" : "idle", "bad");
       setStatus(startedShanghai, msg);
 
       renderError(msg, "", { symbol, startedShanghai });
-      pushHistory({
-        tsShanghai: startedShanghai,
-        ok: false,
-        symbol,
-        msg,
-        error: String(e)
-      });
+
     } finally {
       running = false;
     }
@@ -669,9 +1936,8 @@
     $("btnStop").disabled = false;
     setRunState("running", "info");
 
-    // Call immediately then schedule (no-overlap guard will skip if still running)
-    callExecuteOnce();
-    timer = setInterval(callExecuteOnce, Math.floor(freq * 1000));
+    callOnce();
+    timer = setInterval(callOnce, Math.floor(freq * 1000));
   }
 
   function stopAuto() {
@@ -687,19 +1953,35 @@
   function clearOutput() {
     $("resp").innerHTML = `<div class="muted">(cleared)</div>`;
     $("history").textContent = "(empty)";
-    history = [];
+    historyRecords = [];
+
     setStatus(null, null);
+
+    // DB-driven summary: clear UI and re-render from current DB records (empty now)
+    const sym = normalizeSymbol($("symbol").value);
+    renderSummaryFromDb(sym, historyRecords);
+
   }
 
   // -----------------------------
   // Wiring
   // -----------------------------
   loadForm();
-  ["symbol","cash","pos","avgCost","upl","nowTs","freqSec"].forEach(id => {
+  applyModeUI();
+
+
+  $("modeExecute").addEventListener("click", () => setMode("execute"));
+  $("modeSignal").addEventListener("click", () => setMode("signal"));
+
+  [
+    "symbol","cash","pos","avgCost","upl","nowTs","freqSec",
+    "tzName","lotSize","maxOrderShares","feesBps","slipBps",
+    "marketBarFreq","marketLookback"
+  ].forEach(id => {
     $(id).addEventListener("input", saveForm);
   });
 
-  $("btnOnce").addEventListener("click", callExecuteOnce);
+  $("btnOnce").addEventListener("click", callOnce);
   $("btnStart").addEventListener("click", startAuto);
   $("btnStop").addEventListener("click", stopAuto);
   $("btnClear").addEventListener("click", clearOutput);
@@ -710,9 +1992,24 @@
   if (!$("pos").value) $("pos").value = "0";
   if (!$("avgCost").value) $("avgCost").value = "0";
   if (!$("upl").value) $("upl").value = "0";
+  if (!$("tzName").value) $("tzName").value = "Asia/Shanghai";
+  if (!$("lotSize").value) $("lotSize").value = "100";
+  if (!$("maxOrderShares").value) $("maxOrderShares").value = "10000";
+  if (!$("feesBps").value) $("feesBps").value = "5";
+  if (!$("slipBps").value) $("slipBps").value = "5";
 
   setStatus(null, null);
   setRunState("idle", "info");
+
+  // Initial backend history load (if a symbol is present)
+  refreshHistory(normalizeSymbol($("symbol").value));
+
+  // Refresh backend history when symbol changes
+  $("symbol").addEventListener("change", () => {
+    const sym = normalizeSymbol($("symbol").value);
+    refreshHistory(sym);
+  });
+
 </script>
 </body>
 </html>

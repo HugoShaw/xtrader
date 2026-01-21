@@ -50,5 +50,7 @@ class Settings(BaseSettings):
     cache_spot_ttl_sec: float = Field(default=3.0, alias="CACHE_SPOT_TTL_SEC")
     cache_orderbook_ttl_sec: float = Field(default=1.0, alias="CACHE_ORDERBOOK_TTL_SEC")
     cache_bars_ttl_sec: float = Field(default=2.0, alias="CACHE_BARS_TTL_SEC")
-
+ 
+    timezone_name: str = Field(default="Asia/Shanghai", alias="TIMEZONE_NAME")
+    
 settings = Settings()

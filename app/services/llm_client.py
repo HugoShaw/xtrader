@@ -243,7 +243,7 @@ class OpenAICompatLLM:
         user_prompt: str,
         schema_hint: Dict[str, Any],
         *,
-        temperature: float = 0.1,
+        temperature: float = 1,
         model_cls: Type[TModel] = TradeSignal,   # ✅ default stays TradeSignal, but reusable
     ) -> TModel:
         """
@@ -343,7 +343,7 @@ class OpenAICompatLLM:
         system_prompt: str,
         user_prompt: str,
         *,
-        temperature: float = 0.7,
+        temperature: float = 1,
         max_tokens: Optional[int] = None,
     ) -> str:
         messages = [
@@ -370,7 +370,7 @@ class OpenAICompatLLM:
         self,
         messages: List[Dict[str, str]],
         *,
-        temperature: float = 0.7,
+        temperature: float = 1,
         max_tokens: Optional[int] = None,
     ) -> str:
         if not messages:
