@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.concurrency import run_in_threadpool
 
 from app.config import settings
+from app.logging_config import logger
 
 from app.services.cache import build_cache
 
@@ -209,13 +210,16 @@ async def signal(symbol: str, ctx: TradingContextIn):
             fees_bps_est=int(opt.fees_bps_est),
             slippage_bps_est=int(opt.slippage_bps_est),
             market_kwargs=opt.market.to_kwargs(),
+            strategy_mode=opt.strategy_mode,
         )
         return sig
 
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"signal_error: {e}")
+        logger.exception("signal_error | symbol=%s", symbol)
+        raise HTTPException(status_code=500, detail=f"signal_error: {type(e).__name__}: {e}")
+
 
 
 @app.post("/execute/{symbol}", tags=["trading"])
@@ -249,6 +253,7 @@ async def execute(symbol: str, ctx: TradingContextIn):
             fees_bps_est=int(opt.fees_bps_est),
             slippage_bps_est=int(opt.slippage_bps_est),
             market_kwargs=opt.market.to_kwargs(),
+            strategy_mode=opt.strategy_mode,
         )
         return res
 
@@ -301,8 +306,8 @@ async def api_stock_bars(
     symbol: str,
     start: str,
     end: str,
-    freq: str = "5",
-    limit: int = 2000,
+    freq: str = "1",
+    limit: Optional[int] = None, 
 ):
     code = normalize_cn_symbol(symbol)
     try:
@@ -315,7 +320,14 @@ async def api_stock_bars(
             limit=limit,
         )
         payload = bars_to_payload(df)
-        payload.update({"symbol": code, "freq": freq, "start": start, "end": end})
+        payload.update({
+            "symbol": code,
+            "freq": freq,
+            "start": start,
+            "end": end,
+            "limit": limit,
+            "count": len(df),
+        })
         return payload
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"stock_bars_error: {e}")

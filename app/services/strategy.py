@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import time
 from datetime import datetime
-from typing import Optional, Tuple, Any, Dict, List
+from typing import Optional, Tuple, Any, Dict, List, Literal
 
 from app.logging_config import logger
 from app.models import (
@@ -22,6 +22,9 @@ from app.services.market_data import MarketDataProvider
 from app.services.llm_client import OpenAICompatLLM
 from app.services.trade_history_db import TradeHistoryDB
 from app.utils.timeutils import now_shanghai, ensure_shanghai, fmt_shanghai
+
+
+StrategyMode = Literal["mild", "normal", "aggressive"]
 
 
 SIGNAL_SCHEMA_HINT = {
@@ -99,8 +102,7 @@ def _estimate_realized_pnl_cny_roundtrip(
     Assumptions:
       - account.avg_cost_cny is average cost per share EXCLUDING fees (common).
       - We subtract SELL-side total friction cost passed in (sell_total_cost_cny).
-      - BUY-side fees are NOT precisely known here (paper broker doesn't update avg_cost),
-        so we do NOT allocate buy-fees again to avoid double counting.
+      - BUY-side fees are NOT precisely known here, so we do NOT allocate buy-fees again.
 
     realized_pnl ~= (sell_price - avg_cost) * shares - sell_total_cost
     """
@@ -122,15 +124,11 @@ class StrategyEngine:
 
     Flow:
       snapshot (market) + intraday_records_today (db) + account + constraints
-        -> prompt_builder
+        -> prompt_builder (includes strategy_mode)
         -> LLM JSON TradeSignal
         -> risk gating
         -> broker place_order (paper)
       All decisions are persisted as "intraday records" for feedback-loop.
-
-    Requires TradeHistoryDB to implement:
-      - list_intraday_today(symbol, now_ts, limit) -> List[Dict]
-      - append_intraday(symbol, now_ts, record) -> None
     """
 
     def __init__(
@@ -143,6 +141,7 @@ class StrategyEngine:
         trade_history_db: TradeHistoryDB,
         fixed_lots: int = 1,
         trade_history_limit: int = 10,
+        default_strategy_mode: StrategyMode = "normal",
     ):
         self.market = market
         self.llm = llm
@@ -153,11 +152,16 @@ class StrategyEngine:
         self.fixed_lots = int(fixed_lots)
         self.trade_history_limit = int(trade_history_limit)
 
+        if default_strategy_mode not in ("mild", "normal", "aggressive"):
+            default_strategy_mode = "normal"
+        self.default_strategy_mode: StrategyMode = default_strategy_mode
+
         logger.info(
-            "StrategyEngine initialized | fixed_lots=%s min_confidence=%s trade_history_limit=%s",
+            "StrategyEngine initialized | fixed_lots=%s min_confidence=%s trade_history_limit=%s default_strategy_mode=%s",
             self.fixed_lots,
             getattr(self.risk, "min_confidence", None),
             self.trade_history_limit,
+            self.default_strategy_mode,
         )
 
     @staticmethod
@@ -175,6 +179,13 @@ class StrategyEngine:
         }
 
     @staticmethod
+    def _normalize_strategy_mode(strategy_mode: Optional[str], default: StrategyMode) -> StrategyMode:
+        s = (strategy_mode or "").strip().lower()
+        if s in ("mild", "normal", "aggressive"):
+            return s  # type: ignore[return-value]
+        return default
+
+    @staticmethod
     def _compute_suggested_shares(
         signal: TradeSignal,
         *,
@@ -182,9 +193,7 @@ class StrategyEngine:
         fixed_lots: int,
         max_order_shares: Optional[int],
     ) -> Tuple[int, int]:
-        """
-        Returns (suggested_lots, suggested_shares) after normalization/clamping.
-        """
+        """Returns (suggested_lots, suggested_shares) after normalization/clamping."""
         if signal.action not in ("BUY", "SELL"):
             return 0, 0
 
@@ -230,17 +239,15 @@ class StrategyEngine:
         """
         Persist an intraday record.
 
-        ✅ Requirement:
+        Requirement:
           executed_price_cny := snapshot.last_price (last stock price), for all statuses.
 
-        ✅ Option A:
+        Option A:
           fees_cny := total_cost_cny (all-in friction) for backward compatibility.
-          fee_cny/slippage_cny/total_cost_cny are the detailed breakdown.
         """
         try:
             last_px = _safe_float(getattr(snapshot, "last_price", None))
 
-            # Pull cost fields from TradeResult if provided
             tr = trade_result
             executed_price_net_cny = _safe_float(getattr(tr, "executed_price_net_cny", None)) if tr else None
             notional_cny = _safe_float(getattr(tr, "notional_cny", None)) if tr else None
@@ -249,30 +256,33 @@ class StrategyEngine:
             total_cost_cny = _safe_float(getattr(tr, "total_cost_cny", None)) if tr else None
             cash_delta_cny = _safe_float(getattr(tr, "cash_delta_cny", None)) if tr else None
 
-            # ✅ Option A enforcement: legacy fees_cny mirrors total_cost_cny
-            fees_cny = total_cost_cny
+            fees_cny = total_cost_cny  # legacy alias
 
             record: Dict[str, Any] = {
                 "decision_ts": now_ts_sh,
+
                 "action": getattr(signal, "action", ""),
                 "expected_direction": getattr(signal, "expected_direction", None),
                 "confidence": float(getattr(signal, "confidence", 0.0) or 0.0),
                 "reason": getattr(signal, "reason", None),
                 "risk_notes": getattr(signal, "risk_notes", None),
+
                 "lot_size": int(getattr(constraints, "lot_size", 100) or 100),
                 "suggested_lots": int(suggested_lots),
                 "suggested_shares": int(suggested_shares),
+
                 "status": str(status),
                 "ok": bool(ok),
                 "message": str(message),
+
                 "signal_json": _safe_json_dumps(signal),
                 "snapshot_json": _safe_json_dumps(snapshot),
                 "broker_details_json": _safe_json_dumps(broker_details) if broker_details else None,
 
-                # ✅ required: always store snapshot.last_price here
+                # always store snapshot.last_price here
                 "executed_price_cny": last_px,
 
-                # ✅ Option A + detailed costs
+                # option A + detailed costs
                 "fees_cny": fees_cny,
                 "executed_price_net_cny": executed_price_net_cny,
                 "notional_cny": notional_cny,
@@ -300,6 +310,7 @@ class StrategyEngine:
         fees_bps_est: int = 5,
         slippage_bps_est: int = 5,
         market_kwargs: Optional[Dict[str, Any]] = None,
+        strategy_mode: Optional[StrategyMode] = None,
     ) -> Tuple[MarketSnapshot, ExecutionConstraints, TradeSignal, List[Dict[str, Any]]]:
         t0 = time.perf_counter()
         sym = symbol.strip()
@@ -307,9 +318,11 @@ class StrategyEngine:
         market_kwargs_n = self._normalize_market_kwargs(market_kwargs)
         trades_left = self.risk.trades_left()
 
+        mode: StrategyMode = self._normalize_strategy_mode(strategy_mode, self.default_strategy_mode)
+
         logger.info(
-            "signal_start | symbol=%s cash_cny=%.2f pos=%s now_ts=%s trades_left=%s "
-            "tz=%s lot_size=%s max_order_shares=%s fees_bps=%s slip_bps=%s market_kwargs=%s",
+            "signal_start | symbol=%s cash_cny=%.2f pos=%s now_ts=%s trades_left=%s tz=%s lot_size=%s "
+            "max_order_shares=%s fees_bps=%s slip_bps=%s strategy_mode=%s market_kwargs=%s",
             sym,
             float(account.cash_cny),
             int(account.position_shares),
@@ -320,6 +333,7 @@ class StrategyEngine:
             max_order_shares,
             int(fees_bps_est),
             int(slippage_bps_est),
+            mode,
             market_kwargs_n,
         )
 
@@ -358,7 +372,7 @@ class StrategyEngine:
             intraday_records_today = []
         hist_ms = (time.perf_counter() - hist_t0) * 1000.0
 
-        # 4) prompt
+        # 4) prompt (✅ pass strategy_mode to LLM via user_prompt payload)
         prompt = build_user_prompt(
             snapshot,
             now_ts=now_ts_sh,
@@ -366,6 +380,7 @@ class StrategyEngine:
             account=account,
             constraints=constraints,
             trade_history_records=intraday_records_today,
+            strategy_mode=mode,
         )
 
         # 5) LLM
@@ -390,8 +405,8 @@ class StrategyEngine:
 
         total_ms = (time.perf_counter() - t0) * 1000.0
         logger.info(
-            "signal_done | symbol=%s action=%s conf=%.3f dir=%s lots=%s shares=%s "
-            "bars=%s hist=%s ms_total=%.1f ms_snap=%.1f ms_hist=%.1f ms_llm=%.1f last_price=%s now_ts=%s contract=%s",
+            "signal_done | symbol=%s action=%s conf=%.3f dir=%s lots=%s shares=%s bars=%s hist=%s "
+            "ms_total=%.1f ms_snap=%.1f ms_hist=%.1f ms_llm=%.1f last_price=%s now_ts=%s strategy_mode=%s contract=%s",
             sym,
             signal.action,
             float(signal.confidence),
@@ -406,6 +421,7 @@ class StrategyEngine:
             llm_ms,
             getattr(snapshot, "last_price", None),
             now_ts_sh,
+            mode,
             constraints.market_contract,
         )
 
@@ -423,6 +439,7 @@ class StrategyEngine:
         fees_bps_est: int = 5,
         slippage_bps_est: int = 5,
         market_kwargs: Optional[Dict[str, Any]] = None,
+        strategy_mode: Optional[StrategyMode] = None,
     ) -> TradeSignal:
         _, _, signal, _ = await self._snapshot_and_signal(
             symbol,
@@ -434,6 +451,7 @@ class StrategyEngine:
             fees_bps_est=fees_bps_est,
             slippage_bps_est=slippage_bps_est,
             market_kwargs=market_kwargs,
+            strategy_mode=strategy_mode,
         )
         return signal
 
@@ -449,6 +467,7 @@ class StrategyEngine:
         fees_bps_est: int = 5,
         slippage_bps_est: int = 5,
         market_kwargs: Optional[Dict[str, Any]] = None,
+        strategy_mode: Optional[StrategyMode] = None,
     ) -> TradeResult:
         t0 = time.perf_counter()
         sym = symbol.strip()
@@ -463,6 +482,7 @@ class StrategyEngine:
             fees_bps_est=fees_bps_est,
             slippage_bps_est=slippage_bps_est,
             market_kwargs=market_kwargs,
+            strategy_mode=strategy_mode,
         )
 
         suggested_lots, suggested_shares = self._compute_suggested_shares(
@@ -553,7 +573,7 @@ class StrategyEngine:
             action=signal.action,
             shares=int(suggested_shares),
             lot_size=int(constraints.lot_size),
-            price_cny=_safe_float(getattr(snapshot, "last_price", None)),  # ✅ reference price for cost model
+            price_cny=_safe_float(getattr(snapshot, "last_price", None)),  # reference price for cost model
         )
 
         broker_t0 = time.perf_counter()
@@ -598,14 +618,13 @@ class StrategyEngine:
                         "fee_cny": _safe_float(res.fee_cny),
                         "slippage_cny": _safe_float(res.slippage_cny),
                         "total_cost_cny": _safe_float(res.total_cost_cny),
-                        "fees_cny_legacy": _safe_float(res.total_cost_cny),  # fees_cny == total_cost_cny
+                        "fees_cny_legacy": _safe_float(res.total_cost_cny),
                         "cash_delta_cny": _safe_float(res.cash_delta_cny),
                     }
                 )
             except Exception:
                 pass
 
-        # Save intraday record (executed_price_cny := snapshot.last_price)
         await self._persist_intraday_record(
             symbol=sym,
             now_ts_sh=decision_ts_sh,
@@ -618,7 +637,7 @@ class StrategyEngine:
             ok=bool(res.ok),
             message=str(res.message),
             broker_details=res.details,
-            trade_result=res if res.ok else None,  # persist cost fields only when ok
+            trade_result=res if res.ok else None,
             realized_pnl_cny=realized_pnl_cny,
         )
 

@@ -22,8 +22,8 @@ def fetch_cn_minute_bars(
     symbol: str,
     start: str,
     end: str,
-    freq: Literal["1", "5", "15", "30", "60"] = "5",
-    limit: int = 2000,
+    freq: Literal["1", "5", "15", "30", "60"] = "1",
+    limit: Optional[int] = None,
 ) -> pd.DataFrame:
     """
     Fetch A-share minute bars via AkShare/Eastmoney.
@@ -87,8 +87,10 @@ def fetch_cn_minute_bars(
     df = df.dropna(subset=["close"])
 
     # Limit rows from the end
-    if limit and len(df) > limit:
-        df = df.tail(limit)
+    if limit is not None:
+        limit = int(limit)
+        if limit > 0 and len(df) > limit:
+            df = df.tail(limit)
 
     return df
 

@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator, field_serializer
 
 from app.utils.timeutils import ensure_shanghai, fmt_shanghai
 
+StrategyMode = Literal["mild", "normal", "aggressive"]
 
 class Bar(BaseModel):
     ts: datetime
@@ -202,6 +203,7 @@ class ExecutionOptionsIn(BaseModel):
     max_order_shares: Optional[int] = Field(default=1000, ge=0)
     fees_bps_est: int = Field(default=5, ge=0, le=10_000)
     slippage_bps_est: int = Field(default=5, ge=0, le=10_000)
+    strategy_mode: StrategyMode = Field(default="normal")
     market: MarketOptionsIn = Field(default_factory=MarketOptionsIn)
 
     def normalized_max_order_shares(self) -> Optional[int]:

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, date
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Literal
 
 from app.config import settings
 from app.logging_config import logger
@@ -15,117 +15,122 @@ from app.utils.timeutils import (
     parse_shanghai,
 )
 
+StrategyMode = Literal["mild", "normal", "aggressive"]
+
+
 # =====================================================================
 # Contract:
 # - Bars are intraday OHLCV with dynamic bar_freq_minutes
 # - Size is in LOTS (手), not money
 # - Only intraday trade history (today) is provided
+# - LONG-only semantics (SELL reduces existing long; no shorting)
 # =====================================================================
 
-SYSTEM_PROMPT = f"""You are a quantitative trading signal assistant for China A-share intraday trading.
+SYSTEM_PROMPT = f"""You are a quantitative trading SIGNAL assistant for China A-share intraday trading.
 
-You MUST output ONLY valid JSON.
+You MUST output ONLY valid JSON:
 - No markdown
 - No code fences
 - No explanations outside JSON
 - No extra keys beyond the schema below
 
 You MUST use ONLY the information provided by the user:
-- Intraday OHLCV price bars (frequency is provided as instrument.bar_freq_minutes)
-- Derived features computed from those bars
+- Intraday OHLCV bars (frequency is instrument.bar_freq_minutes)
+- Derived features computed from those bars (derived_features)
 - Account state
-- Execution constraints (including lot_size)
-- Transaction costs (buy_fee_rate, sell_fee_rate) and slippage estimate
-- Intraday trade history (TODAY only: your past decisions + realized PnL/cost)
+- Execution constraints (including lot_size, max_order_shares, max_trades_left_today, min_confidence_to_trade)
+- Transaction costs (buy_fee_rate, sell_fee_rate) and bps estimates (fees_bps_est, slippage_bps_est)
+- Intraday trade history (TODAY only)
+
 Do NOT assume any news, fundamentals, or external data.
 
 === Trading cadence ===
 - This decision is made once every 30 minutes during market trading hours.
-- You are given intraday OHLCV bars up to the latest completed bar before "now".
-- You must produce a forward-looking signal for the NEXT 30 minutes.
-- The bar frequency is provided as instrument.bar_freq_minutes.
+- You are given bars up to the latest completed bar before "now".
+- You must produce a forward-looking SIGNAL for the NEXT 30 minutes.
+
+=== IMPORTANT: what features mean (avoid common mistake) ===
+- derived_features.ret_15m / ret_30m / ret_horizon are BACKWARD-LOOKING realized returns (momentum proxies).
+  They are NOT guaranteed forecasts.
+- Form an expected 30-minute drift estimate by combining:
+  (A) momentum proxies (ret_15m/ret_30m/ret_horizon),
+  (B) range position (pos_in_range_0_1),
+  (C) volatility/regime (realized_vol_recent, range_pct_N),
+  (D) volume confirmation (volume_ratio_recent),
+  (E) intraday feedback (today trade history).
 
 === Transaction costs (MUST consider carefully) ===
-You are given:
+Given constants:
 - buy_fee_rate (fraction of notional) = {settings.buy_fee_rate:.6f}
 - sell_fee_rate (fraction of notional) = {settings.sell_fee_rate:.6f}
-- slippage_bps_est and fees_bps_est in execution_constraints (bps; 1 bps = 0.0001)
+And bps estimates in execution_constraints:
+- fees_bps_est, slippage_bps_est (1 bps = 0.0001)
 
 Interpretation:
-- One-way BUY friction (rough): buy_fee_rate + (fees_bps_est + slippage_bps_est)/1e4
-- One-way SELL friction (rough): sell_fee_rate + (fees_bps_est + slippage_bps_est)/1e4
-- Round-trip friction for entering then exiting soon ≈ buy_one_way + sell_one_way
-  (This matters because a trade realized over the next horizon usually requires you to exit later.)
+- One-way BUY friction ≈ buy_fee_rate + (fees_bps_est + slippage_bps_est)/1e4
+- One-way SELL friction ≈ sell_fee_rate + (fees_bps_est + slippage_bps_est)/1e4
+- Round-trip friction ≈ buy_one_way + sell_one_way
 
-Fee-aware decision rule:
-- Use derived_features.ret_horizon (or ret_30m) as a rough expected move over the next 30 minutes.
-- If expected move is not comfortably larger than the relevant friction hurdle, treat edge as weak:
-  reduce confidence and/or suggested_lots, or HOLD.
-- “Comfortably larger” means NOT just barely above costs; require some margin because ret_horizon is noisy.
+Rule:
+- Use transaction_costs.round_trip_friction_rate_est as the conservative hurdle.
+- Do NOT trade on a tiny edge that barely clears costs: require margin because signals are noisy.
 
-Direction-aware:
-- For BUY: you need UP move that beats (round-trip friction) to be truly profitable on exit.
-- For SELL: you benefit from DOWN move, but you still pay SELL costs on entry and BUY costs on cover/next entry;
-  use the same “round-trip” thinking for short-horizon profitability.
+=== Long-only semantics ===
+- BUY means increasing/entering a long position.
+- SELL means reducing/closing an EXISTING long position (no shorting).
+- If position_shares == 0, prefer HOLD over SELL unless you have a strong bearish drift AND the system explicitly supports shorting (assume it does NOT).
 
-=== IMPORTANT: Signal vs Execution ===
-- You output a *signal* (BUY/SELL/HOLD) and a LOTS sizing hint.
-- The system will apply final execution gating (cash/position/trade limits/confidence thresholds).
-- Therefore: Do NOT force HOLD just because of constraints; still output the best signal you see.
-  Use suggested_lots to express your conviction and fee-aware edge.
+=== Signal vs Execution (to avoid confusing behavior) ===
+- You output: action + confidence + expected_direction + suggested_lots.
+- The system applies final execution gating (cash/position feasibility, max trades left, confidence thresholds).
+- If constraints likely BLOCK execution (e.g., max_trades_left_today == 0), you may still output the best direction,
+  but set suggested_lots = 0 and mention "blocked by constraints" briefly in reason.
 
-=== Confidence calibration (use these anchors) ===
-- 0.80–0.95: strong, fee-positive edge with clear confirmation (trend/range+volume); low ambiguity.
-- 0.65–0.80: moderate edge, costs likely covered, some confirmation.
-- 0.50–0.65: marginal edge or mixed signals; costs borderline; size small or HOLD.
-- <0.50: unclear or likely fee-negative after costs+slippage; prefer HOLD or minimal size.
-
-=== How to use intraday trade history (TODAY only) ===
-- Intraday history is feedback about how previous decisions performed today (same-day microstructure).
-- If recent trades show consistent losses under similar patterns, reduce aggressiveness and/or confidence.
-- If intraday history is missing/short, do NOT overfit.
+=== Confidence calibration (anchors) ===
+- 0.80–0.95: strong edge with clear confirmation; fee-positive with margin.
+- 0.65–0.80: moderate edge; costs likely covered; some confirmation.
+- 0.50–0.65: marginal / mixed; borderline after costs; size tiny or HOLD.
+- <0.50: unclear or likely fee-negative; HOLD (or 0 lots).
 
 === Anti-churn / consistency ===
-- Avoid flip-flopping: do not switch BUY->SELL (or SELL->BUY) within the same day unless evidence is strong
-  (range break, momentum reversal, or clear regime shift).
-- If intraday history shows recent losses (e.g., last 2–3 trades negative), reduce suggested_lots and confidence
-  unless the edge is clearly stronger than before.
+- Avoid flip-flopping within the same day (BUY->SELL or SELL->BUY) unless evidence is strong (range break, momentum reversal, clear regime shift).
+- If last 2–3 trades are negative today, reduce confidence and size unless current setup is clearly stronger.
 
 === Range (FLAT) regime is tradable ===
-- expected_direction describes the most likely *drift* over next 30 minutes.
-- If expected_direction is FLAT, you may still output BUY or SELL as mean-reversion (action can differ from drift):
-  - If price is near recent range low (pos_in_range_0_1 small) and no breakdown signs -> BUY
-  - If price is near recent range high (pos_in_range_0_1 large) and no breakout signs -> SELL
-  - Otherwise -> HOLD
+- expected_direction is the most likely drift (UP/DOWN/FLAT).
+- If drift is FLAT, you may still BUY/SELL as mean-reversion:
+  - pos_in_range_0_1 low + no breakdown signs -> BUY (mean reversion)
+  - pos_in_range_0_1 high + no breakout signs -> SELL (reduce long)
+  - else HOLD
 
-=== Sizing guidance (fee-aware, no artificial small-lot restriction) ===
-- suggested_lots must be an integer >= 0 (0 for HOLD).
-- Size should be driven by *expected net edge* (after fees + slippage), *volatility/regime*, and *intraday feedback*.
-- Use execution_constraints to stay feasible:
-  - Shares = suggested_lots * lot_size
-  - Respect max_order_shares when present
-  - Respect trade limits (max_trades_left_today) but still output the best signal even if the system may block it
-- Simple monotonic sizing map (guideline, not a hard rule):
-  - If action is BUY/SELL and edge is fee-positive but modest: suggested_lots ~ 1–2
-  - If confidence >= 0.75 and edge clearly exceeds costs: suggested_lots may be larger (e.g., 2–5+) within constraints
-  - If confidence < 0.65 or edge is borderline: suggested_lots ~ 0–1 or HOLD
-- If confidence is low OR edge is fee-negative, reduce lots or HOLD.
-- If confidence is high AND edge clearly exceeds costs, you may size larger (within constraints).
+=== Strategy mode (authoritative) ===
+You MUST follow decision_policy.strategy_mode and its multipliers:
+- Mild: stricter hurdle, stronger confirmation, smaller size, fewer flips.
+- Normal: balanced.
+- Aggressive: does NOT mean "trade on marginal edge"; it means "size up when confirmed".
+
+=== Sizing guidance (fee-aware) ===
+- suggested_lots must be integer >= 0 (0 for HOLD).
+- Shares = suggested_lots * lot_size.
+- Respect max_order_shares when present.
+- Size is driven by net edge (after costs), regime/volatility, and TODAY feedback.
+- If edge is borderline after costs -> HOLD or suggested_lots = 0–1 with low confidence.
+- If edge clears costs with margin AND confirmed -> larger lots may be appropriate (within constraints).
 
 === Reason must be data-grounded ===
 - reason must cite at least TWO of:
-  derived_features.ret_horizon/ret_30m, pos_in_range_0_1, volume_ratio_recent, realized_vol_recent,
+  derived_features.ret_horizon/ret_30m/ret_15m, pos_in_range_0_1, volume_ratio_recent, realized_vol_recent, range_pct_N,
   and/or intraday trade history summary (wins/losses/last_action).
-- Mention fee-awareness when relevant (e.g., “edge barely clears round-trip friction”).
+- Mention fee-awareness when relevant (e.g., "edge barely clears round-trip friction" -> reduce size).
 
 === Output schema (STRICT) ===
 Return a JSON object with EXACTLY these keys:
 - action: one of ["BUY", "SELL", "HOLD"]
 - horizon_minutes: must be 30
-- confidence: number between 0 and 1 (calibrated; higher only when edge is clear and fee-aware)
+- confidence: number between 0 and 1
 - expected_direction: one of ["UP", "DOWN", "FLAT"]
-- suggested_lots: integer >= 0 (required; number of lots/手; 0 for HOLD)
-- reason: short, specific, data-grounded explanation referencing derived_features and recent bars and (if helpful) intraday trade history; mention cost-awareness when relevant
+- suggested_lots: integer >= 0 (0 for HOLD)
+- reason: short, specific, data-grounded explanation
 - risk_notes: short, include at least ONE concrete risk
 
 You MUST NOT output any other fields.
@@ -255,6 +260,10 @@ def _compute_micro_features(
 ) -> Dict[str, Any]:
     """
     Compute features that adapt to bar frequency.
+
+    NOTE:
+      - Returns are backward-looking realized returns (momentum proxies).
+      - This function does not "forecast" the next 30 minutes.
     """
     bar_freq_minutes = max(int(bar_freq_minutes or 1), 1)
     horizon_minutes = max(int(horizon_minutes or 30), 1)
@@ -292,6 +301,7 @@ def _compute_micro_features(
     c_30m = closes[idx_back(bars_30m)]
     c_hz = closes[idx_back(bars_hz)]
 
+    # Realized vol over ~60m window (or min 6 bars)
     bars_60m = max(6, int(round(60 / bar_freq_minutes)))
     window = min(max(6, bars_60m), len(closes) - 1)
     start = max(1, len(closes) - window)
@@ -299,16 +309,17 @@ def _compute_micro_features(
     mean_ret = sum(rets) / max(len(rets), 1)
     rv = (sum((r - mean_ret) ** 2 for r in rets) / max(len(rets), 1)) ** 0.5
 
+    # Range window ~60m (min 12 bars)
     N_pref = max(12, int(round(60 / bar_freq_minutes)))
     N = min(N_pref, len(closes))
     hiN = max(highs[-N:])
     loN = min(lows[-N:])
     rangeN = max(hiN - loN, 1e-9)
     pos_in_range = (last - loN) / rangeN
-    # clamp for sanity
     pos_in_range = max(0.0, min(1.0, float(pos_in_range)))
     range_pct = rangeN / max(last, 1e-9)
 
+    # Volume ratio: recent vs average in the range window
     recent_n = min(max(3, bars_15m), len(vols))
     avg_vol = (sum(vols[-N:]) / max(N, 1)) if N else 0.0
     recent_vol = (sum(vols[-recent_n:]) / max(recent_n, 1)) if recent_n else 0.0
@@ -333,6 +344,7 @@ def _compute_micro_features(
         "volume_ratio_recent": float(vol_ratio),
         "volume_recent_n_bars": int(recent_n),
         "range_window_n_bars": int(N),
+        "note": "All ret_* fields are backward-looking realized returns (momentum proxies), not forecasts.",
     }
 
 
@@ -411,23 +423,21 @@ def _summarize_intraday(records_today: List[Dict[str, Any]]) -> Dict[str, Any]:
         "total_realized_pnl_cny_today": total_pnl,
         "total_fees_cny_today": total_fees,
         "last_action_today": last_action,
-        "note": "Use TODAY records as highest-priority feedback for confidence + suggested_lots. Avoid repeating losing patterns.",
+        "note": (
+            "Use TODAY records as highest-priority feedback for confidence and sizing. "
+            "If losing today, reduce suggested_lots and confidence unless current setup is clearly stronger."
+        ),
     }
 
 
 def _cost_model_from_constraints(constraints: ExecutionConstraints) -> Dict[str, Any]:
     """
     Build a fee/slippage model the LLM can reason about numerically.
-
-    We expose:
-      - one-way buy/sell friction rates (fraction of notional)
-      - round-trip friction rate (buy + sell)
-      - the same expressed in bps (approx)
+    Exposes friction rates (fraction of notional) and bps approximations.
     """
     fees_bps = int(getattr(constraints, "fees_bps_est", 0) or 0)
     slip_bps = int(getattr(constraints, "slippage_bps_est", 0) or 0)
 
-    # clamp extreme values to avoid accidental nonsense
     fees_bps = max(0, min(fees_bps, 50_000))
     slip_bps = max(0, min(slip_bps, 50_000))
     add_bps = fees_bps + slip_bps
@@ -455,11 +465,23 @@ def _cost_model_from_constraints(constraints: ExecutionConstraints) -> Dict[str,
         "buy_one_way_friction_bps_est": float(to_bps(buy_oneway_rate)),
         "sell_one_way_friction_bps_est": float(to_bps(sell_oneway_rate)),
         "round_trip_friction_bps_est": float(to_bps(roundtrip_rate)),
-        "note": (
-            "Use round_trip_friction_* as a conservative hurdle for 30-min profitability; "
-            "edge should exceed costs with margin, not barely."
-        ),
+        "note": "Use round_trip_friction_* as a conservative hurdle; require margin above costs.",
     }
+
+
+def _normalize_strategy_mode(mode: Any) -> StrategyMode:
+    s = str(mode or "normal").strip().lower()
+    if s in ("mild", "normal", "aggressive"):
+        return s  # type: ignore[return-value]
+    return "normal"
+
+
+def _drop_none(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return {k: _drop_none(v) for k, v in obj.items() if v is not None}
+    if isinstance(obj, list):
+        return [_drop_none(v) for v in obj]
+    return obj
 
 
 def build_user_prompt(
@@ -472,13 +494,19 @@ def build_user_prompt(
     trade_history_records: List[Dict[str, Any]],
     decision_goal: str = "Fee-aware intraday trading with controlled trading frequency",
     trade_style: str = "Intraday trading, decision every 30 minutes",
+    strategy_mode: StrategyMode = "normal",
 ) -> str:
     """
+    Build JSON payload for the LLM.
+
     Notes:
       - market_contract is carried inside constraints.market_contract (dict)
-      - prompt exposes an explicit cost model to force fee-aware reasoning
+      - exposes explicit cost model to force fee-aware reasoning
+      - makes strategy_mode behavior more robust: aggressive scales size when confirmed,
+        rather than lowering the cost hurdle into noise-churn territory.
     """
     snap_ts = ensure_shanghai(snapshot.ts) if snapshot.ts else None
+    strategy_mode = _normalize_strategy_mode(strategy_mode)
 
     # market_contract from constraints (backward compatible)
     mc: Dict[str, Any] = {}
@@ -503,7 +531,7 @@ def build_user_prompt(
     features = _compute_micro_features(
         bars,
         bar_freq_minutes=int(bar_freq),
-        horizon_minutes=int(constraints.horizon_minutes or 30),
+        horizon_minutes=int(getattr(constraints, "horizon_minutes", 30) or 30),
     )
     last_close = features.get("last_close")
 
@@ -514,19 +542,27 @@ def build_user_prompt(
     intraday_summary = _summarize_intraday(intraday_today_records)
 
     intraday_max = int(getattr(settings, "max_trades_per_day", 50) or 50)
-
     cost_model = _cost_model_from_constraints(constraints)
+
+    # Optional market semantics (safe defaults if missing)
+    # If you later support ETFs or other instruments allowing same-day round-trips,
+    # set allow_intraday_roundtrip=True in market_contract.
+    allow_intraday_roundtrip = bool(mc.get("allow_intraday_roundtrip", False))
+    t_plus_one = bool(mc.get("t_plus_one", True))  # CN-A stocks default to T+1
 
     market_data_obj: Dict[str, Any] = {
         "bars": bars,
         "note": (
-            "bars are intraday OHLCV. bar_freq_minutes tells the bar size. "
+            "bars are intraday OHLCV. instrument.bar_freq_minutes tells the bar size. "
             "lookback_minutes (if provided) indicates the intended history window used to fetch these bars."
         ),
     }
-    # Backward compatibility if downstream still expects bars_5m
     if int(bar_freq) == 5:
-        market_data_obj["bars_5m"] = bars
+        market_data_obj["bars_5m"] = bars  # backward compatibility
+
+    # Strategy-mode policy knobs: conservative hurdle, size scaling when confirmed
+    strategy_mode_hurdle_multipliers = {"mild": 1.30, "normal": 1.10, "aggressive": 1.00}
+    strategy_mode_size_multipliers = {"mild": 0.70, "normal": 1.00, "aggressive": 1.30}
 
     payload: Dict[str, Any] = {
         "task": (
@@ -545,83 +581,124 @@ def build_user_prompt(
             "lookback_minutes": int(lookback_minutes) if lookback_minutes is not None else None,
             "currency": getattr(constraints, "currency", "CNY") or "CNY",
             "current_reference_price_close": float(last_close) if last_close is not None else None,
+            "t_plus_one": t_plus_one,
+            "allow_intraday_roundtrip": allow_intraday_roundtrip,
         },
         "account_state": {
             "cash_cny": float(getattr(account, "cash_cny", 0.0) or 0.0),
             "position_shares": int(getattr(account, "position_shares", 0) or 0),
-            "avg_cost_cny": float(account.avg_cost_cny) if getattr(account, "avg_cost_cny", None) is not None else None,
-            "unrealized_pnl_cny": float(account.unrealized_pnl_cny) if getattr(account, "unrealized_pnl_cny", None) is not None else None,
+            "avg_cost_cny": float(account.avg_cost_cny)
+            if getattr(account, "avg_cost_cny", None) is not None
+            else None,
+            "unrealized_pnl_cny": float(account.unrealized_pnl_cny)
+            if getattr(account, "unrealized_pnl_cny", None) is not None
+            else None,
         },
         "execution_constraints": {
             "horizon_minutes": int(constraints.horizon_minutes),
             "max_trades_left_today": int(constraints.max_trades_left_today),
             "lot_size": int(constraints.lot_size),
-            "max_order_shares": int(constraints.max_order_shares) if constraints.max_order_shares is not None else None,
+            "max_order_shares": int(constraints.max_order_shares)
+            if constraints.max_order_shares is not None
+            else None,
             "min_confidence_to_trade": float(constraints.min_confidence_to_trade),
             "fees_bps_est": int(getattr(constraints, "fees_bps_est", 0) or 0),
-            "slippage_bps_est": int(constraints.slippage_bps_est),
+            "slippage_bps_est": int(getattr(constraints, "slippage_bps_est", 0) or 0),
             "market_contract": mc,
             "sizing_rule": "Output suggested_lots (手). Shares = suggested_lots * lot_size. For HOLD use suggested_lots=0.",
         },
-        # ✅ Fee model: give the LLM a numeric hurdle (bps + rate)
         "transaction_costs": cost_model,
-        "fee_aware_edge_guidance": {
-            "expected_move_field": "derived_features.ret_horizon (fallback: ret_30m)",
-            "hurdle_field_recommendation": "transaction_costs.round_trip_friction_rate_est (conservative for 30m)",
-            "rule_of_thumb": (
-                "If abs(ret_horizon) < round_trip_friction_rate_est, "
-                "edge is likely fee-negative -> HOLD or tiny size with low confidence. "
-                "If comfortably above, confidence and size can increase."
-            ),
-        },
-        "decision_policy": {
-            "goal": decision_goal,
-            "trade_style": trade_style,
-            "signal_rule": (
-                "UP drift -> BUY; DOWN drift -> SELL; "
-                "FLAT drift may still BUY/SELL as mean-reversion if price is near range extremes; otherwise HOLD."
-            ),
-            "position_management": "Scale in/out conservatively; avoid aggressive flips.",
-            "cost_awareness": "Always judge net edge after round-trip friction (fees+slippage).",
-            "note": "Final execution gating (confidence threshold, trade limits, cash/position feasibility) is done outside the LLM.",
-        },
+        "derived_features": features,
+        "market_data": market_data_obj,
         "intraday_trade_history": {
             "trading_day_shanghai": trading_day.isoformat(),
             "summary": intraday_summary,
             "records_today": intraday_today_records[-intraday_max:],
             "how_to_use": [
                 "Use TODAY feedback to adjust confidence and suggested_lots.",
-                "If today is losing, reduce suggested_lots and confidence unless edge is clearly stronger and fee-positive.",
+                "If today is losing, reduce suggested_lots and confidence unless current setup is clearly stronger and fee-positive.",
+                "Avoid flip-flopping unless there is a clear regime change (breakout/breakdown/reversal).",
             ],
         },
-        "market_data": market_data_obj,
-        "derived_features": features,
+        "fee_aware_edge_guidance": {
+            "momentum_proxy_fields": ["derived_features.ret_horizon", "derived_features.ret_30m", "derived_features.ret_15m"],
+            "regime_fields": [
+                "derived_features.pos_in_range_0_1",
+                "derived_features.realized_vol_recent",
+                "derived_features.range_pct_N",
+                "derived_features.volume_ratio_recent",
+            ],
+            "base_hurdle_field": "transaction_costs.round_trip_friction_rate_est",
+            "effective_hurdle_formula": (
+                "effective_hurdle = round_trip_friction_rate_est * decision_policy.strategy_mode_hurdle_multipliers[strategy_mode]"
+            ),
+            "rule_of_thumb": (
+                "If abs(momentum_proxy) < effective_hurdle: edge likely fee-negative -> HOLD or tiny size with low confidence. "
+                "If comfortably above AND confirmed by regime/volume: confidence and size can increase."
+            ),
+            "note": "ret_* fields are backward-looking momentum proxies; combine with regime/volume to infer next-30m drift.",
+        },
+        "decision_policy": {
+            "goal": decision_goal,
+            "trade_style": trade_style,
+            "strategy_mode": strategy_mode,
+            "strategy_mode_hurdle_multipliers": strategy_mode_hurdle_multipliers,
+            "strategy_mode_size_multipliers": strategy_mode_size_multipliers,
+            "strategy_mode_guidance": {
+                "mild": (
+                    "Conservative: require stronger confirmation and higher net edge. "
+                    "Prefer HOLD when borderline; smaller size; avoid flips."
+                ),
+                "normal": (
+                    "Balanced: trade when fee-positive edge clears hurdle with margin and has confirmation. "
+                    "Size proportionally to confidence and net edge."
+                ),
+                "aggressive": (
+                    "More active only when confirmed: do NOT trade merely because edge barely clears costs. "
+                    "Keep cost hurdle conservative; express aggressiveness mainly through larger size when signals align."
+                ),
+            },
+            "signal_rule": (
+                "expected_direction is drift: UP/DOWN/FLAT. "
+                "UP drift -> BUY. DOWN drift -> SELL (reduce existing long). "
+                "FLAT drift can still BUY/SELL as mean-reversion near range extremes; otherwise HOLD."
+            ),
+            "position_management": "Scale in/out conservatively; avoid rapid flips within the day.",
+            "constraints_handling": (
+                "If constraints likely block execution (e.g., max_trades_left_today==0), "
+                "keep the best direction but set suggested_lots=0 and mention the block briefly."
+            ),
+            "market_semantics": (
+                "Assume long-only. If position_shares==0, prefer HOLD over SELL. "
+                "If instrument.t_plus_one is true, avoid reasoning that requires same-day round-trip selling."
+            ),
+            "cost_awareness": (
+                "Use transaction_costs.round_trip_friction_rate_est as conservative hurdle. "
+                "Apply strategy_mode_hurdle_multipliers[strategy_mode] to form effective_hurdle. "
+                "Only scale size when the edge is fee-positive with margin AND confirmed; "
+                "size scaling may use strategy_mode_size_multipliers[strategy_mode]."
+            ),
+            "note": "Final execution gating is outside the LLM.",
+        },
         "output_required": {
             "return_only_json": True,
             "horizon_minutes": 30,
             "size_unit": "lots",
+            "schema_keys_exact": ["action", "horizon_minutes", "confidence", "expected_direction", "suggested_lots", "reason", "risk_notes"],
         },
         "important_rules": [
+            "Output ONLY valid JSON with EXACT schema keys; no extra keys.",
             "Size MUST be suggested_lots (integer lots/手). Do not output money sizing.",
-            "Keep confidence calibrated and fee-aware; round-trip friction is the conservative hurdle.",
-            "Range regime is tradable via mean-reversion near range extremes (use pos_in_range_0_1).",
-            "Do not hallucinate: use only provided bars + derived_features + intraday_history.",
-            "Bar frequency varies; interpret returns/features using instrument.bar_freq_minutes.",
+            "Keep confidence calibrated and fee-aware; require margin above costs.",
+            "Avoid churn and flip-flops; use TODAY history as feedback.",
+            "ret_* fields are momentum proxies (backward-looking), not forecasts; combine with regime/volume.",
         ],
     }
-
-    def _drop_none(obj: Any) -> Any:
-        if isinstance(obj, dict):
-            return {k: _drop_none(v) for k, v in obj.items() if v is not None}
-        if isinstance(obj, list):
-            return [_drop_none(v) for v in obj]
-        return obj
 
     payload = _drop_none(payload)
 
     logger.info(
-        "PROMPT DATA | sym=%s bar_freq=%sm bars=%s intraday_today=%s cash=%.2f lot_size=%s lookback_min=%s "
-        "rt_cost_bps=%.2f",
+        "PROMPT DATA | sym=%s bar_freq=%sm bars=%s intraday_today=%s cash=%.2f lot_size=%s lookback_min=%s rt_cost_bps=%.2f mode=%s",
         getattr(snapshot, "symbol", None),
         int(bar_freq),
         len(snapshot.recent_bars or []),
@@ -630,6 +707,7 @@ def build_user_prompt(
         int(constraints.lot_size),
         int(lookback_minutes) if lookback_minutes is not None else None,
         float(cost_model.get("round_trip_friction_bps_est") or 0.0),
+        strategy_mode,
     )
 
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
