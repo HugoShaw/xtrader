@@ -962,8 +962,8 @@ function drawTopLegend(ctx, items, padL, padT, cssW, padR) {
   ctx.textBaseline = "alphabetic";
 
   let x = x0;
-  const gap = 14;     // gap between legend items
-  const dotR = 4;     // dot radius
+  const gap = 20;     // gap between legend items (increased for better spacing)
+  const dotR = 6;     // dot radius (larger for better visibility)
 
   for (const it of (items || [])) {
     const label = String(it?.label || "");
@@ -971,7 +971,7 @@ function drawTopLegend(ctx, items, padL, padT, cssW, padR) {
 
     // measure width: dot + space + label
     const tw = ctx.measureText(label).width;
-    const need = (dotR * 2) + 6 + tw + gap;
+    const need = (dotR * 2) + 10 + tw + gap;
 
     // if legend row is too long, stop (or you can wrap to 2nd row)
     if (x + need > maxX) break;
@@ -979,12 +979,12 @@ function drawTopLegend(ctx, items, padL, padT, cssW, padR) {
     // dot
     ctx.fillStyle = color;
     ctx.beginPath();
-    ctx.arc(x + dotR, y0 - 4, dotR, 0, Math.PI * 2);
+    ctx.arc(x + dotR, y0, dotR, 0, Math.PI * 2);
     ctx.fill();
 
     // label
-    ctx.fillStyle = "rgba(232,238,252,.88)";
-    ctx.fillText(label, x + (dotR * 2) + 6, y0);
+    ctx.fillStyle = "rgba(232,238,252,.85)";
+    ctx.fillText(label, x + (dotR * 2) + 10, y0);
 
     x += need;
   }
@@ -1616,102 +1616,27 @@ function renderCandleChartShell(symbol) {
   `;
 }
 
+function buildExecuteMarkerFromResponse(root, tsShanghai) {
+  const action = pick(root, ["action"]) || pick(root?.details?.signal, ["action"]);
+  const a = normalizeAction(action);
+  if (a !== "BUY" && a !== "SELL") return [];
 
-  function buildExecuteMarkerFromResponse(root, tsShanghai) {
-    const action =
-      pick(root, ["action"]) ||
-      pick(root?.details?.signal, ["action"]);
+  const lots = extractLotsFromResponse(root);
+  const price = extractCallPriceFromResponse(root);
 
-    const a = normalizeAction(action);
-    if (a !== "BUY" && a !== "SELL") return [];
+  const t = parseShanghaiTsMs(tsShanghai);
+  if (t == null) return [];
 
-    const lots = extractLotsFromResponse(root);
-    const price = extractCallPriceFromResponse(root);
-
-    const t = parseShanghaiTsMs(tsShanghai);
-    if (t == null) return [];
-
-    return [{
-      t,
-      action: a,
-      price: (Number.isFinite(Number(price)) ? Number(price) : null),
-      lots: (Number.isFinite(Number(lots)) ? Math.floor(Number(lots)) : null),
-      tsShanghai: tsShanghai || null
-    }];
-  }
-
-async function loadAndDrawMarketSnapshotCandlesFromBarsApi(card, symbol, endShanghaiTs, rootForMarker) {
-  const sym = normalizeSymbol(symbol);
-  if (!sym || !card) return;
-
-  const { start: startTs, end: endTs } = shanghaiRecentDaysRangeHms(3);
-  const freq = String($("marketMinPeriod").value || "1").trim() || "1";
-
-  const metaEl = card.querySelector(".candleMeta");
-  const hintEl = card.querySelector(".chartHint");
-  const canvas = card.querySelector("canvas.candle");
-
-  try {
-    if (metaEl) metaEl.textContent = `window=${startTs} → ${endTs} • freq=${freq}`;
-    if (hintEl) hintEl.innerHTML = `Fetching bars from <code>/api/stock/bars</code>…`;
-
-    const payload = await fetchBarsFromApi(sym, startTs, endTs, freq, null);
-    const ohlc = extractBarsFromBarsApiPayload(payload); 
-
-    const markerTs =
-      String(pick(rootForMarker, ["ts"]) || pick(rootForMarker?.details, ["ts"]) || endTs || "").trim();
-
-    const markers = buildExecuteMarkerFromResponse(rootForMarker, markerTs);
-
-    if (!canvas) return;
-
-    const doDraw = (view = null) => drawCandlesOnCanvas(canvas, ohlc, markers, view);
-    doDraw(null);
-
-    // attach redraw hook (keeps current zoom view)
-    card.__redrawCandles = () => doDraw(card.__zoomState?.view || null);
-
-    // wire zoom (uses draw + view)
-    wireZoomForChart(
-      card,
-      canvas,
-      () => ohlc,
-      () => markers,
-      (view) => doDraw(view)
-    );
- 
-
-    // attach redraw hook to card (used when unfolding / resizing)
-    card.__redrawCandles = doDraw;
-
-    // show meta
-    if (metaEl) metaEl.textContent = `bars=${ohlc.length} • freq=${freq}`;
-    if (hintEl) {
-      hintEl.innerHTML =
-        `bars=${escapeHtml(String(ohlc.length))} • ` +
-        `${escapeHtml(startTs)} → ${escapeHtml(endTs)} • ` +
-        `source=<code>/api/stock/bars</code>`;
-    }
-
-    // redraw on resize (prevents “thin/blank after resize”)
-    if (!card.__ro) {
-      card.__ro = new ResizeObserver(() => {
-        if (!isChartFolded(card) && typeof card.__redrawCandles === "function") {
-          card.__redrawCandles();
-        }
-      });
-      card.__ro.observe(card);
-    }
-
-  } catch (e) {
-    if (hintEl) {
-      hintEl.innerHTML =
-        `<span class="pill bad">bars load failed</span> ` +
-        `<span class="muted">${escapeHtml(String(e))}</span>`;
-    }
-  }
+  // Here we ensure that only one marker per action (BUY/SELL) for a given timestamp
+  return [{
+    t,
+    action: a,
+    price: (Number.isFinite(Number(price)) ? Number(price) : null),
+    lots: (Number.isFinite(Number(lots)) ? Math.floor(Number(lots)) : null),
+    tsShanghai: tsShanghai || null
+  }];
 }
-
+ 
     // -----------------------------
   // Marker + candle helpers (drop-in)
   // Requires: clamp(), escapeHtml(), toShTsYmdHmsFromMs() (you already have),
@@ -1727,42 +1652,42 @@ async function loadAndDrawMarketSnapshotCandlesFromBarsApi(card, symbol, endShan
     _lastIdx: -1,
   };
 
-  // Map a timestamp to an X coordinate within the plot area.
-  // - ohlc: [{t,o,h,l,c}, ...] with .t in epoch ms sorted ascending
-  // - padL: left padding in CSS px
-  // - W: plot width in CSS px
-  // Uses linear interpolation between neighboring bars.
-  function xOfTs(ohlc, t, padL, W) {
-    if (!ohlc || ohlc.length === 0 || t === null || t === undefined) return null;
+// Map a timestamp to an X coordinate within the plot area.
+// - ohlc: [{t,o,h,l,c}, ...] with .t in epoch ms sorted ascending
+// - padL: left padding in CSS px
+// - W: plot width in CSS px
+// Uses linear interpolation between neighboring bars.
+function xOfTs(bars, t, padL, W) {
+  if (!bars || bars.length === 0 || t === null || t === undefined) return null;
 
-    const n = ohlc.length;
-    if (n === 1) return padL + W / 2;
+  const n = bars.length;
+  if (n === 1) return padL + W / 2;
 
-    const t0 = ohlc[0].t;
-    const tN = ohlc[n - 1].t;
-    if (!Number.isFinite(t0) || !Number.isFinite(tN) || tN === t0) return null;
+  const t0 = bars[0].t;
+  const tN = bars[n - 1].t;
+  if (!Number.isFinite(t0) || !Number.isFinite(tN) || tN === t0) return null;
 
-    // If outside range, clamp to edges
-    if (t <= t0) return padL;
-    if (t >= tN) return padL + W;
+  // If outside range, clamp to edges
+  if (t <= t0) return padL;
+  if (t >= tN) return padL + W;
 
-    // Binary search for rightmost index with ohlc[i].t <= t
-    let lo = 0, hi = n - 1;
-    while (lo + 1 < hi) {
-      const mid = (lo + hi) >> 1;
-      if (ohlc[mid].t <= t) lo = mid;
-      else hi = mid;
-    }
-
-    const tA = ohlc[lo].t;
-    const tB = ohlc[hi].t;
-    const frac = (tB === tA) ? 0 : (t - tA) / (tB - tA);
-
-    const xStep = W / Math.max(1, n - 1);
-    const xA = padL + lo * xStep;
-    const xB = padL + hi * xStep;
-    return xA + (xB - xA) * frac;
+  // Binary search for rightmost index with ohlc[i].t <= t
+  let lo = 0, hi = n - 1;
+  while (lo + 1 < hi) {
+    const mid = (lo + hi) >> 1;
+    if (bars[mid].t <= t) lo = mid;
+    else hi = mid;
   }
+
+  const tA = bars[lo].t;
+  const tB = bars[hi].t;
+  const frac = (tB === tA) ? 0 : (t - tA) / (tB - tA);
+
+  const xStep = W / Math.max(1, n - 1);
+  const xA = padL + lo * xStep;
+  const xB = padL + hi * xStep;
+  return xA + (xB - xA) * frac;
+}
 
   // Apply simple vertical collision avoidance so markers don't overlap too much.
   // - markersPx: [{x,y,r,action,price,lots,tsShanghai,t}, ...]
@@ -1816,41 +1741,33 @@ async function loadAndDrawMarketSnapshotCandlesFromBarsApi(card, symbol, endShan
   }
 
   // Draw a BUY/SELL marker on canvas
-  // - ctx is scaled to CSS pixels (as in ensureCanvasHiDpi)
-  function drawActionMarker(ctx, x, y, action, opts = {}) {
-    const a = String(action || "").toUpperCase();
-    const r = Number.isFinite(Number(opts.radius)) ? Number(opts.radius) : 7;
+  // - ctx is scaled to CSS pixels (as in ensureCanvasHiDpi) 
+function drawActionMarker(ctx, x, y, action, opts = {}) {
+  const a = String(action || "").toUpperCase();
+  const r = Number.isFinite(Number(opts.radius)) ? Number(opts.radius) : 7;
 
-    // outer ring
-    ctx.save();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = "rgba(255,255,255,.85)";
-    ctx.fillStyle = (a === "SELL") ? "rgba(255,107,107,.95)" : "rgba(110,168,254,.95)";
+  // outer ring (circle)
+  ctx.save();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "rgba(255,255,255,.85)";
+  ctx.fillStyle = (a === "SELL") ? "rgba(255,107,107,.95)" : "rgba(110,168,254,.95)"; // red for sell, blue for buy
 
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
 
-    // inner glyph (triangle up for BUY, down for SELL)
-    ctx.fillStyle = "rgba(0,0,0,.55)";
-    ctx.beginPath();
-    if (a === "SELL") {
-      // down triangle
-      ctx.moveTo(x, y + r * 0.45);
-      ctx.lineTo(x - r * 0.55, y - r * 0.35);
-      ctx.lineTo(x + r * 0.55, y - r * 0.35);
-    } else {
-      // up triangle (BUY)
-      ctx.moveTo(x, y - r * 0.45);
-      ctx.lineTo(x - r * 0.55, y + r * 0.35);
-      ctx.lineTo(x + r * 0.55, y + r * 0.35);
-    }
-    ctx.closePath();
-    ctx.fill();
+  // inner letter (B for Buy, S for Sell)
+  ctx.fillStyle = "rgba(0,0,0,.55)"; // dark text color
+  ctx.font = "bold 12px Arial"; // Bold font, 12px size
+  ctx.textAlign = "center"; // Center the text horizontally
+  ctx.textBaseline = "middle"; // Center the text vertically
 
-    ctx.restore();
-  }
+  const text = a === "SELL" ? "S" : "B"; // "S" for sell, "B" for buy
+  ctx.fillText(text, x, y); // Draw the letter in the center of the circle
+
+  ctx.restore();
+}
 
   // Tooltip + hover binding for markers on a given canvas
   function bindMarkerHover(canvas) {
@@ -2018,6 +1935,7 @@ function drawCandlesOnCanvas(canvas, ohlc, markers = [], view = null) {
   const H = Math.max(1, cssH - padT - padB);
 
   canvas.__chartGeom = { cssW, cssH, padL, padR, padT, padB };
+
   // price scale
   let minP = Infinity, maxP = -Infinity;
   for (const b of bars) {
@@ -2078,7 +1996,40 @@ function drawCandlesOnCanvas(canvas, ohlc, markers = [], view = null) {
   }
 
   // -----------------------------
-  // Overlays: last price line + moving averages
+  // Draw Datetime on X-axis
+  // -----------------------------
+  const timeFormat = new Intl.DateTimeFormat("en-GB", {
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit"
+  });
+
+  const labelPadding = 10; // space between labels
+
+  // Draw date labels at the bottom of each candle
+  let lastX = -Infinity;  // Keep track of last label's x position to avoid overlap
+  for (let i = 0; i < bars.length; i++) {
+    const bar = bars[i];
+    const x = xOfIdx(i);
+    const dateStr = timeFormat.format(new Date(bar.t)); // Format the datetime
+
+    ctx.fillStyle = "rgba(255,255,255,.85)";
+    ctx.font = "10px Arial";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+
+    const textWidth = ctx.measureText(dateStr).width;
+    const padding = 5;
+
+    // If the distance between current label and last label is too small, skip drawing this label
+    if (x - lastX > textWidth + labelPadding) {
+      // Draw the datetime label at the bottom of each candle
+      ctx.fillText(dateStr, x, H + padT + padding);
+      lastX = x;  // Update the position of the last label
+    }
+  }
+
+  // -----------------------------
+  // Moving Averages (MA)
   // -----------------------------
   const closes = bars.map(b => b.c);
 
@@ -2440,11 +2391,14 @@ async function renderIndividualChartsFromHistory(symbol, records) {
     return;
   }
 
+  // Clear existing chart card before appending a new one
+  list.innerHTML = ""; // Clear the previous chart card
+
   // pick latest N “signal decisions” that have BUY/SELL
   const candidates = rows
     .filter(r => String(r.symbol || sym) === sym)
-    .filter(r => ["BUY","SELL"].includes(normalizeAction(r.action)))
-    .slice(0, 12); // keep UI snappy
+    .filter(r => ["BUY", "SELL"].includes(normalizeAction(r.action)))
+    .slice(0, 1); // Display only one chart card
 
   if (!candidates.length) {
     list.innerHTML = `<div class="muted">No BUY/SELL records for chart markers.</div>`;
@@ -2481,15 +2435,15 @@ async function renderIndividualChartsFromHistory(symbol, records) {
     </div>
   `).join("");
 
-
+  // Define `freq` here, which corresponds to the market's min period input value
   const freq = String($("marketMinPeriod").value || "1").trim() || "1";
 
-  // fetch + prepare redraw hooks with limited concurrency
+  // fetch and prepare data for drawing the chart
   await mapLimit(candidates, 3, async (r, idx) => {
     const tms = parseShanghaiTsMs(r.decision_ts);
     if (tms == null) return;
 
-    const { start, end } = shanghaiRecentDaysRangeHms(3);
+    const { start, end } = shanghaiRecentDaysRangeHms(1);
 
     const payload = await fetchBarsFromApi(sym, start, end, freq, null); // no limit
     const ohlc = extractBarsFromBarsApiPayload(payload);
@@ -2526,6 +2480,7 @@ async function renderIndividualChartsFromHistory(symbol, records) {
 
   wireAllChartFoldToggles(list);
 }
+
 
   async function fetchTradeHistoryFromBackend(symbol, limit = HISTORY_LIMIT) {
     const sym = normalizeSymbol(symbol);
