@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>xtrader - Log In</title>
+    <style>
+      :root {
+        --bg: #0b1020;
+        --card: #111831;
+        --text: #e8ecf3;
+        --muted: #9aa6c2;
+        --accent: #4f7cff;
+        --accent-2: #3a63d9;
+        --danger: #ff6b6b;
+        --ok: #36d399;
+        --border: #1d2747;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+        background: radial-gradient(1200px 600px at 10% -10%, #1a2450 0%, var(--bg) 55%);
+        color: var(--text);
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+      }
+      .card {
+        width: 100%;
+        max-width: 420px;
+        background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.0));
+        background-color: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 24px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 22px;
+      }
+      p.sub {
+        margin: 0 0 20px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+      label {
+        display: block;
+        font-size: 13px;
+        color: var(--muted);
+        margin: 10px 0 6px;
+      }
+      input {
+        width: 100%;
+        padding: 12px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: #0d1430;
+        color: var(--text);
+        outline: none;
+      }
+      input:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(79,124,255,0.25);
+      }
+      button {
+        margin-top: 16px;
+        width: 100%;
+        padding: 12px 14px;
+        border-radius: 10px;
+        border: none;
+        background: var(--accent);
+        color: white;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:hover { background: var(--accent-2); }
+      .row {
+        margin-top: 14px;
+        font-size: 14px;
+        color: var(--muted);
+        text-align: center;
+      }
+      a { color: var(--accent); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      .msg {
+        margin-top: 12px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        font-size: 14px;
+        display: none;
+        border: 1px solid transparent;
+      }
+      .msg.error {
+        display: block;
+        color: #ffd7d7;
+        background: rgba(255, 107, 107, 0.12);
+        border-color: rgba(255, 107, 107, 0.35);
+      }
+      .msg.ok {
+        display: block;
+        color: #d7ffef;
+        background: rgba(54, 211, 153, 0.12);
+        border-color: rgba(54, 211, 153, 0.35);
+      }
+      code {
+        padding: 1px 6px;
+        border-radius: 6px;
+        background: rgba(255,255,255,0.06);
+        border: 1px solid var(--border);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <h1>Log In</h1>
+      <p class="sub">Authenticate to access protected xtrader routes.</p>
+
+      <form id="login-form">
+        <label for="username">Username</label>
+        <input id="username" name="username" autocomplete="username" required />
+
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required />
+
+        <button id="submit-btn" type="submit">Log In</button>
+        <div id="message" class="msg" role="status" aria-live="polite"></div>
+      </form>
+
+      <div class="row">
+        New here?
+        <a href="/signup">Create an account</a>
+      </div>
+
+      <div class="row" style="margin-top:8px">
+        Try after login: <code>/auth/me</code> or <code>/signal-ui</code>
+      </div>
+    </main>
+
+    <script>
+      const form = document.getElementById("login-form");
+      const msg = document.getElementById("message");
+      const btn = document.getElementById("submit-btn");
+
+      function showMessage(text, kind) {
+        msg.textContent = text;
+        msg.className = `msg ${kind}`;
+      }
+
+      function clearMessage() {
+        msg.textContent = "";
+        msg.className = "msg";
+      }
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        clearMessage();
+
+        const username = document.getElementById("username").value.trim();
+        const password = document.getElementById("password").value;
+
+        if (!username) {
+          showMessage("Username is required.", "error");
+          return;
+        }
+        if (password.length < 8) {
+          showMessage("Password must be at least 8 characters.", "error");
+          return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = "Signing in...";
+
+        try {
+          const res = await fetch("/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, password }),
+            credentials: "same-origin",
+          });
+
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            const detail = data && data.detail ? data.detail : `Login failed (${res.status})`;
+            showMessage(detail, "error");
+            return;
+          }
+
+          showMessage("Logged in. Redirecting...", "ok");
+          setTimeout(() => {
+            window.location.href = "/signal-ui";
+          }, 500);
+        } catch (err) {
+          showMessage(`Network error: ${err}`, "error");
+        } finally {
+          btn.disabled = false;
+          btn.textContent = "Log In";
+        }
+      });
+    </script>
+  </body>
+</html>
+

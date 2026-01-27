@@ -5,7 +5,7 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.concurrency import run_in_threadpool
@@ -15,7 +15,7 @@ from app.logging_config import logger
 
 from app.services.cache import build_cache
 
-from app.storage.db import make_engine, make_session_factory, init_db, session_scope 
+from app.storage.db import make_engine, make_session_factory, init_db
 
 from app.services.market_data import build_market_provider
 from app.services.llm_client import OpenAICompatLLM
@@ -25,11 +25,24 @@ from app.services.strategy import StrategyEngine
 from app.services.trade_history_db import TradeHistoryDB
 from app.services.backtest import BacktestParams, run_backtest, build_report_html
 from app.services.stock_api import fetch_cn_minute_bars, bars_to_payload
+from app.services.auth import (
+    AuthenticatedUser,
+    clear_session_cookie,
+    get_auth_service,
+    set_session_cookie,
+)
 
 from app.models_llm import LLMChatRequest, LLMChatResponse, ChatMessage
 from app.models import TradingContextIn, AccountState
+from app.models_auth import AuthStatus, LoginRequest, SignupRequest
 
 from app.utils.textutils import normalize_cn_symbol
+
+# -------------------------
+# Auth helpers
+# -------------------------
+async def require_user(auth=Depends(get_auth_service)) -> AuthenticatedUser:
+    return await auth.current_user()
 
 # -------------------------
 # Lifespan (startup / shutdown)
@@ -149,8 +162,56 @@ async def health():
     return {"ok": True, "app": "xtrader"}
 
 
+# -------------------------
+# Public auth pages
+# -------------------------
+@app.get("/signup", response_class=HTMLResponse, tags=["auth-ui"])
+async def signup_page():
+    html_path = STATIC_DIR / "signup.html"
+    if not html_path.exists():
+        raise HTTPException(status_code=404, detail="signup.html not found in /static")
+    return html_path.read_text(encoding="utf-8")
+
+
+@app.get("/login", response_class=HTMLResponse, tags=["auth-ui"])
+async def login_page():
+    html_path = STATIC_DIR / "login.html"
+    if not html_path.exists():
+        raise HTTPException(status_code=404, detail="login.html not found in /static")
+    return html_path.read_text(encoding="utf-8")
+
+
+# -------------------------
+# Auth routes
+# -------------------------
+@app.post("/auth/signup", response_model=AuthStatus, tags=["auth"])
+async def auth_signup(req: SignupRequest, request: Request):
+    auth = get_auth_service(request)
+    user = await auth.signup(username=req.username, password=req.password)
+    return AuthStatus(ok=True, user=user.to_public())
+
+
+@app.post("/auth/login", response_model=AuthStatus, tags=["auth"])
+async def auth_login(req: LoginRequest, request: Request, response: Response):
+    auth = get_auth_service(request)
+    user, token = await auth.login(username=req.username, password=req.password)
+    set_session_cookie(response, token)
+    return AuthStatus(ok=True, user=user.to_public())
+
+
+@app.post("/auth/logout", response_model=AuthStatus, tags=["auth"])
+async def auth_logout(response: Response):
+    clear_session_cookie(response)
+    return AuthStatus(ok=True, detail="logged out")
+
+
+@app.get("/auth/me", response_model=AuthStatus, tags=["auth"])
+async def auth_me(user: AuthenticatedUser = Depends(require_user)):
+    return AuthStatus(ok=True, user=user.to_public())
+
+
 @app.get("/risk", tags=["trading"])
-async def risk_status():
+async def risk_status(user: AuthenticatedUser = Depends(require_user)):
     risk = app.state.risk
     return {
         "max_trades_per_day": settings.max_trades_per_day,
@@ -165,7 +226,7 @@ async def risk_status():
 # Trading routes (account-aware)
 # -------------------------
 @app.get("/signal-ui", response_class=HTMLResponse, tags=["ui"])
-async def signal_ui_page():
+async def signal_ui_page(user: AuthenticatedUser = Depends(require_user)):
     html_path = STATIC_DIR / "signal.html"
     if not html_path.exists():
         raise HTTPException(
@@ -175,7 +236,11 @@ async def signal_ui_page():
     return html_path.read_text(encoding="utf-8")
 
 @app.post("/signal/{symbol}", tags=["trading"])
-async def signal(symbol: str, ctx: TradingContextIn):
+async def signal(
+    symbol: str,
+    ctx: TradingContextIn,
+    user: AuthenticatedUser = Depends(require_user),
+):
     """
     Account-aware signal:
     - Body includes account_state + now_ts + optional options overrides
@@ -214,12 +279,16 @@ async def signal(symbol: str, ctx: TradingContextIn):
         raise HTTPException(status_code=500, detail=f"signal_error: {type(e).__name__}: {e}")
 
 @app.get("/ui/execute", response_class=HTMLResponse, tags=["ui"])
-async def ui_execute():
+async def ui_execute(user: AuthenticatedUser = Depends(require_user)):
     # serves app/static/execute.html
     return HTMLResponse((STATIC_DIR / "execute.html").read_text(encoding="utf-8"))
 
 @app.post("/execute/{symbol}", tags=["trading"])
-async def execute(symbol: str, ctx: TradingContextIn):
+async def execute(
+    symbol: str,
+    ctx: TradingContextIn,
+    user: AuthenticatedUser = Depends(require_user),
+):
     """
     Account-aware execute (paper for now):
     - HOLD => ok=True, no broker call
@@ -265,6 +334,7 @@ async def get_trade_history(
     now_ts: str = Query(..., description="YYYY-MM-DD HH:MM:SS"),
     limit: int = Query(50, ge=1, le=200),
     include_json: bool = Query(False),
+    user: AuthenticatedUser = Depends(require_user),
 ):
     code = normalize_cn_symbol(symbol)
     trade_history_db: TradeHistoryDB = app.state.trade_history_db
@@ -273,7 +343,7 @@ async def get_trade_history(
 
 
 @app.post("/trade_history/{symbol}/clear", tags=["trading"])
-async def clear_trade_history(symbol: str):
+async def clear_trade_history(symbol: str, user: AuthenticatedUser = Depends(require_user)):
     code = normalize_cn_symbol(symbol)
     trade_history_db: TradeHistoryDB = app.state.trade_history_db
     n = await trade_history_db.clear(code)
@@ -292,6 +362,7 @@ async def api_stock_bars(
     end: str,
     freq: str = "1",
     limit: Optional[int] = None, 
+    user: AuthenticatedUser = Depends(require_user),
 ):
     code = normalize_cn_symbol(symbol)
     try:
@@ -321,7 +392,7 @@ async def api_stock_bars(
 # Backtest UI + API
 # -------------------------
 @app.get("/backtest", response_class=HTMLResponse, tags=["backtest"])
-async def backtest_page():
+async def backtest_page(user: AuthenticatedUser = Depends(require_user)):
     html_path = STATIC_DIR / "backtest.html"
     if not html_path.exists():
         raise HTTPException(
@@ -339,6 +410,7 @@ async def api_backtest_run(
     freq: str = Query("5", description="Minute frequency: 1/5/15/30/60"),
     fixed_notional: float = Query(200.0, ge=0.0),
     max_trades_per_day: int = Query(10, ge=0, le=100),
+    user: AuthenticatedUser = Depends(require_user),
 ):
     code = normalize_cn_symbol(symbol)
 
@@ -368,6 +440,7 @@ async def api_backtest_report(
     freq: str = Query("5", description="Minute frequency: 1/5/15/30/60"),
     fixed_notional: float = Query(200.0, ge=0.0),
     max_trades_per_day: int = Query(10, ge=0, le=100),
+    user: AuthenticatedUser = Depends(require_user),
 ):
     code = normalize_cn_symbol(symbol)
 
@@ -394,7 +467,7 @@ async def api_backtest_report(
 # LLM passthrough endpoint
 # -------------------------
 @app.post("/api/llm/chat", response_model=LLMChatResponse, tags=["llm"])
-async def api_llm_chat(req: LLMChatRequest):
+async def api_llm_chat(req: LLMChatRequest, user: AuthenticatedUser = Depends(require_user)):
     """
     Direct chat endpoint to your configured OpenAI-compatible LLM (DeepSeek/Qwen/etc).
 

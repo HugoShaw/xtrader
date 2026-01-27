@@ -8,9 +8,13 @@
   <style>
     :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
     body { margin: 0; background: #0b0f19; color: #e8eefc; }
-    header { padding: 18px 20px; border-bottom: 1px solid rgba(255,255,255,.08); }
+    header { padding: 18px 20px; border-bottom: 1px solid rgba(255,255,255,.08); display: grid; gap: 6px; }
     header h1 { margin: 0; font-size: 18px; font-weight: 650; }
-    header p { margin: 6px 0 0; opacity: .8; font-size: 13px; }
+    header p { margin: 0; opacity: .8; font-size: 13px; }
+    .headerRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .authBox { display: flex; align-items: center; gap: 8px; }
+    .authUser { font-size: 13px; opacity: .9; padding: 6px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.04); }
+    .authHidden { display: none !important; }
 
     .wrap { max-width: 1200px; margin: 0 auto; padding: 18px 20px 40px; display: grid; gap: 14px; }
     .grid { display: grid; grid-template-columns: 380px 1fr; gap: 14px; align-items: start; }
@@ -133,6 +137,53 @@
       padding: 8px 10px;
       border-radius: 10px;
     }
+
+    /* --- Auth modal --- */
+    .modal {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.55);
+      z-index: 50;
+      padding: 16px;
+    }
+    .modal.open { display: flex; }
+    .modalCard {
+      width: 100%;
+      max-width: 380px;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,.12);
+      background: #0d1324;
+      box-shadow: 0 24px 80px rgba(0,0,0,.55);
+      padding: 16px;
+      display: grid;
+      gap: 10px;
+    }
+    .modalTop { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .modalTop h3 { margin: 0; font-size: 16px; }
+    .iconBtn {
+      padding: 6px 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.06);
+      cursor: pointer;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .modalHint { font-size: 12px; opacity: .8; }
+    .modalMsg {
+      font-size: 13px;
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,.12);
+      background: rgba(255,255,255,.04);
+      display: none;
+    }
+    .modalMsg.show { display: block; }
+    .modalMsg.bad { border-color: rgba(255,107,107,.45); background: rgba(255,107,107,.12); }
+    .modalMsg.ok { border-color: rgba(64,192,128,.45); background: rgba(64,192,128,.12); }
 
     /* --- Candlestick plot --- */
     .chartCard {
@@ -363,7 +414,14 @@
 
 <body>
 <header>
-  <h1>xtrader trading UI</h1>
+  <div class="headerRow">
+    <h1>xtrader trading UI</h1>
+    <div class="authBox">
+      <span id="authUser" class="authUser authHidden"></span>
+      <button id="btnLogin" class="primary" type="button">Log In</button>
+      <button id="btnLogout" class="danger authHidden" type="button">Log Out</button>
+    </div>
+  </div>
   <p>
     Send a symbol + trading context to
     <span class="pill info">POST /signal/{symbol}</span>
@@ -372,6 +430,29 @@
     Timestamps shown in <span class="pill info">Asia/Shanghai</span>.
   </p>
 </header>
+
+<div id="loginModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+  <div class="modalCard">
+    <div class="modalTop">
+      <h3 id="loginTitle">Quick Login</h3>
+      <button id="loginClose" class="iconBtn" type="button" aria-label="Close">✕</button>
+    </div>
+    <div class="modalHint">Log in to access protected routes.</div>
+    <div id="loginMsg" class="modalMsg" role="status" aria-live="polite"></div>
+    <label>
+      Username
+      <input id="loginUsername" autocomplete="username" />
+    </label>
+    <label>
+      Password
+      <input id="loginPassword" type="password" autocomplete="current-password" />
+    </label>
+    <div class="btns">
+      <button id="loginSubmit" class="primary" type="button">Log In</button>
+      <a class="muted" href="/signup" style="align-self:center">Create account</a>
+    </div>
+  </div>
+</div>
 
 <div class="wrap">
   <div class="grid">
@@ -835,11 +916,19 @@ async function fetchBarsFromApi(symbol, start, end, freq = "1", limit = null) {
     url += `&limit=${encodeURIComponent(String(limit))}`;
   }
 
-  const resp = await fetch(url, { method: "GET" });
+  const resp = await fetch(url, {
+    method: "GET",
+    credentials: "same-origin",
+  });
   const rawText = await resp.text();
   let data;
   try { data = JSON.parse(rawText); } catch { data = { raw: rawText }; }
 
+  if (resp.status === 401) {
+    // Protected by auth; prompt quick login and stop this flow.
+    try { openLoginModal(); } catch {}
+    throw new Error("Not authenticated. Please log in.");
+  }
   if (!resp.ok) throw new Error(`bars API failed: HTTP ${resp.status} ${resp.statusText} :: ${rawText}`);
   return data;
 }
@@ -2916,6 +3005,139 @@ async function renderIndividualChartsFromHistory(symbol, records) {
 
   $("modeExecute").addEventListener("click", () => setMode("execute"));
   $("modeSignal").addEventListener("click", () => setMode("signal"));
+
+  // -----------------------------
+  // Auth UI (header + quick login)
+  // -----------------------------
+  const authUserEl = $("authUser");
+  const btnLogin = $("btnLogin");
+  const btnLogout = $("btnLogout");
+  const loginModal = $("loginModal");
+  const loginClose = $("loginClose");
+  const loginSubmit = $("loginSubmit");
+  const loginMsg = $("loginMsg");
+  const loginUsername = $("loginUsername");
+  const loginPassword = $("loginPassword");
+
+  function setAuthMessage(text, kind) {
+    if (!loginMsg) return;
+    loginMsg.textContent = text || "";
+    loginMsg.className = "modalMsg show" + (kind === "bad" ? " bad" : kind === "ok" ? " ok" : "");
+  }
+
+  function clearAuthMessage() {
+    if (!loginMsg) return;
+    loginMsg.textContent = "";
+    loginMsg.className = "modalMsg";
+  }
+
+  function openLoginModal() {
+    clearAuthMessage();
+    loginModal?.classList.add("open");
+    setTimeout(() => loginUsername?.focus(), 0);
+  }
+
+  function closeLoginModal() {
+    loginModal?.classList.remove("open");
+  }
+
+  function renderAuth(user) {
+    if (user && user.username) {
+      authUserEl.textContent = `@${user.username}`;
+      authUserEl.classList.remove("authHidden");
+      btnLogout.classList.remove("authHidden");
+      btnLogin.classList.add("authHidden");
+      return;
+    }
+    authUserEl.textContent = "";
+    authUserEl.classList.add("authHidden");
+    btnLogout.classList.add("authHidden");
+    btnLogin.classList.remove("authHidden");
+  }
+
+  async function fetchMe() {
+    try {
+      const res = await fetch("/auth/me", { credentials: "same-origin" });
+      if (!res.ok) {
+        renderAuth(null);
+        return null;
+      }
+      const data = await res.json();
+      const user = data && data.user ? data.user : null;
+      renderAuth(user);
+      return user;
+    } catch (err) {
+      renderAuth(null);
+      return null;
+    }
+  }
+
+  async function quickLogin() {
+    clearAuthMessage();
+    const username = (loginUsername?.value || "").trim();
+    const password = loginPassword?.value || "";
+
+    if (!username) {
+      setAuthMessage("Username is required.", "bad");
+      return;
+    }
+    if (password.length < 8) {
+      setAuthMessage("Password must be at least 8 characters.", "bad");
+      return;
+    }
+
+    loginSubmit.disabled = true;
+    loginSubmit.textContent = "Signing in...";
+
+    try {
+      const res = await fetch("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = data && data.detail ? data.detail : `Login failed (${res.status})`;
+        setAuthMessage(detail, "bad");
+        return;
+      }
+      setAuthMessage("Logged in.", "ok");
+      await fetchMe();
+      setTimeout(closeLoginModal, 200);
+    } catch (err) {
+      setAuthMessage(`Network error: ${err}`, "bad");
+    } finally {
+      loginSubmit.disabled = false;
+      loginSubmit.textContent = "Log In";
+    }
+  }
+
+  async function doLogout() {
+    btnLogout.disabled = true;
+    try {
+      await fetch("/auth/logout", { method: "POST", credentials: "same-origin" });
+    } catch (err) {
+      // ignore network errors here; still clear UI state
+    } finally {
+      btnLogout.disabled = false;
+      renderAuth(null);
+    }
+  }
+
+  btnLogin?.addEventListener("click", openLoginModal);
+  btnLogout?.addEventListener("click", doLogout);
+  loginClose?.addEventListener("click", closeLoginModal);
+  loginSubmit?.addEventListener("click", quickLogin);
+  loginModal?.addEventListener("click", (e) => {
+    if (e.target === loginModal) closeLoginModal();
+  });
+  loginPassword?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") quickLogin();
+  });
+
+  // initial auth state
+  fetchMe();
 
   [
     "symbol","cash","pos","avgCost","upl","nowTs","freqSec",

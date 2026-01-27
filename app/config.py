@@ -52,5 +52,10 @@ class Settings(BaseSettings):
     cache_bars_ttl_sec: float = Field(default=2.0, alias="CACHE_BARS_TTL_SEC")
  
     timezone_name: str = Field(default="Asia/Shanghai", alias="TIMEZONE_NAME")
-    
+
+    # Auth (simple cookie session)
+    auth_secret_key: str = Field(default="dev-insecure-change-me", alias="AUTH_SECRET_KEY")
+    auth_session_ttl_seconds: int = Field(default=60 * 60 * 12, alias="AUTH_SESSION_TTL_SECONDS")
+    auth_cookie_name: str = Field(default="xtrader_session", alias="AUTH_COOKIE_NAME")
+
 settings = Settings()

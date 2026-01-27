@@ -1,146 +1,196 @@
-# xtrader
+﻿# xtrader
 
-**xtrader** is an intraday quantitative trading assistant for China A-shares powered by LLMs (DeepSeek/Qwen/OpenAI-compatible).
-It combines **real-time market data**, **account state**, **risk control**, and **trade history feedback** to generate disciplined trading signals every 30 minutes.
+xtrader is an intraday quantitative trading assistant for China A-shares powered by OpenAI-compatible LLMs (DeepSeek/Qwen/OpenAI, etc.). It combines real-time market data, account state, risk controls, trade-history feedback, and a simple cookie-based authentication system to generate disciplined 30-minute trading signals.
 
-> ⚠️ This project is for **research & paper trading** only.  
-> Do NOT use with real capital without extensive testing.
+> This project is for research and paper trading only. Do not use real capital without extensive testing.
 
 ---
 
-## Features
+## Project Structure
 
-* 🔹 LLM-driven trade decision engine (BUY / SELL / HOLD)
-* 🔹 Uses **AkShare (Eastmoney)** real-time & minute bars
-* 🔹 Account-aware decisions (cash, position, cost, PnL)
-* 🔹 Strict **risk management**
-  * max trades per day
-  * cooldown
-  * confidence threshold
-  * max position exposure
-* 🔹 Trade history stored in **SQLite**
-* 🔹 Paper broker (no real orders)
-* 🔹 Backtest UI & API
-* 🔹 Direct LLM chat endpoint (structured JSON supported)
-* 🔹 Full logging & observability
-
----
-
-## Architecture
-
-```
-
+```text
 xtrader/
-│
-├── app/
-│   ├── main.py                # FastAPI entrypoint
-│   ├── config.py              # Settings (.env)
-│   ├── logging_config.py
-│
-│   ├── services/
-│   │   ├── strategy.py        # Core trading engine
-│   │   ├── prompt_builder.py  # LLM prompt
-│   │   ├── market_data.py
-│   │   ├── market_data_akshare.py
-│   │   ├── risk.py
-│   │   ├── broker.py
-│   │   ├── llm_client.py
-│   │   ├── trade_history_db.py
-│   │   └── cache.py
-│
-│   ├── storage/
-│   │   ├── db.py              # Async SQLite
-│   │   ├── orm_models.py
-│   │   └── repo.py
-│
-│   ├── models.py
-│   └── models_llm.py
-│
-├── static/
-│   ├── signal.html
-│   ├── execute.html
-│   └── backtest.html
-│
-├── .env
-└── README.md
-
-````
+  app/
+    main.py                # FastAPI entrypoint and routes
+    config.py              # Settings loaded from .env (Pydantic v2)
+    logging_config.py
+    models.py              # Core trading models and API schemas
+    models_llm.py          # LLM chat/request schemas
+    models_auth.py         # Auth request/response schemas
+    services/
+      strategy.py          # StrategyEngine: signal + execution flow
+      prompt_builder.py    # System prompt + structured user prompt
+      auth.py              # Password hashing + signed cookie sessions
+      risk.py              # RiskManager guardrails
+      broker.py            # Paper broker (no real orders)
+      market_data.py       # Market data interface + provider factory
+      market_data_akshare.py
+      trade_history_db.py  # DB-backed intraday history feedback loop
+      backtest.py          # Backtest API helpers and report HTML
+      llm_client.py        # OpenAI-compatible LLM client
+      stock_api.py         # Stock bar endpoints/helpers
+      cache.py             # Cache abstraction (memory/redis)
+    storage/
+      db.py                # Async SQLAlchemy engine/session/init
+      orm_models.py        # ORM table definitions (includes users table)
+      auth_repo.py         # User repository
+      repo.py              # Query and persistence layer
+    utils/
+      timeutils.py
+      textutils.py
+  static/
+    signup.html
+    login.html
+    signal.html
+    execute.html
+    backtest.html
+  scripts/
+    migrate_intraday_trades_add_costs.py
+  .env
+  README.md
+```
 
 ---
 
 ## Tech Stack
 
-* **FastAPI**
-* **SQLAlchemy (async)**
-* **SQLite (production mode, WAL)**
-* **AkShare**
-* **DeepSeek / OpenAI compatible LLM**
-* **Pydantic v2**
-* **Python 3.10+**
+- FastAPI
+- SQLAlchemy (async) + aiosqlite
+- SQLite (WAL)
+- AkShare (Eastmoney)
+- OpenAI-compatible LLM APIs
+- Pydantic v2
+- Python 3.10+
 
 ---
 
-## Installation
+## Quick Start
 
-```bash
-git clone <your_repo>
-cd xtrader
+1. Create and activate a virtual environment.
 
+```powershell
 python -m venv .venv
-source .venv/bin/activate
+.\.venv\Scripts\Activate.ps1
+```
 
+2. Install dependencies.
+
+```powershell
 pip install -r requirements.txt
-````
+```
+
+3. Configure `.env` (see below).
+
+4. Run the API.
+
+```powershell
+uvicorn app.main:app --reload --port 8000
+```
 
 ---
 
 ## Environment Variables (.env)
 
+These map directly to `app/config.py`.
+
 ```env
 # Market
 MARKET_PROVIDER=akshare
+MARKET_API_KEY=
 
-# LLM
+# LLM (OpenAI-compatible)
 LLM_PROVIDER=deepseek
 LLM_API_KEY=sk-xxxx
 LLM_BASE_URL=https://api.deepseek.com/v1
-LLM_MODEL=deepseek-reasoner
+LLM_MODEL=deepseek-chat
 
-# Risk guardrails
+# Risk / execution guardrails
 MAX_TRADES_PER_DAY=5
 TRADE_COOLDOWN_SECONDS=1200
 MAX_POSITION_VALUE_CNY=100000
 FIXED_TRADE_AMOUNT_CNY=5000
+FIXED_SLOTS=1
 MIN_CONFIDENCE=0.65
+
+# Cost model
+BUY_FEE_RATE=0.00015
+SELL_FEE_RATE=0.0025
 
 # Database
 DATABASE_URL=sqlite+aiosqlite:///./xtrader.db
+
+# Cache
+CACHE_BACKEND=memory
+CACHE_REDIS_URL=redis://localhost:6379/0
+CACHE_SPOT_TTL_SEC=3
+CACHE_ORDERBOOK_TTL_SEC=1
+CACHE_BARS_TTL_SEC=2
+
+# Timezone
+TIMEZONE_NAME=Asia/Shanghai
+
+# Auth (cookie session)
+AUTH_SECRET_KEY=change-this-in-prod
+AUTH_SESSION_TTL_SECONDS=43200
+AUTH_COOKIE_NAME=xtrader_session
 ```
 
 ---
 
-## Run
+## Authentication
 
-```bash
-uvicorn app.main:app --reload --port 8000
-```
+The app now uses a simple cookie-based session for protecting most routes.
 
-Open:
+Public pages:
+- `GET /signup`
+- `GET /login`
 
-* Swagger UI: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
-* Health check: [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
+Auth APIs:
+- `POST /auth/signup`
+- `POST /auth/login`
+- `POST /auth/logout`
+- `GET /auth/me`
+
+Behavior:
+- On successful login, the backend sets an HTTP-only cookie.
+- Protected routes require that cookie (no explicit `user` query/body param is needed).
+- The `execute.html` page includes a quick-login modal and automatically checks `/auth/me`.
 
 ---
 
 ## Core Endpoints
 
-### 1) Generate Signal
+Public:
+- `GET /health`
+- `GET /signup`
+- `GET /login`
+- `POST /auth/signup`
+- `POST /auth/login`
+- `POST /auth/logout`
+- `GET /auth/me` (returns 401 if not logged in)
+
+Protected (requires login cookie):
+- `GET /risk`
+- `GET /signal-ui`
+- `POST /signal/{symbol}`
+- `POST /execute/{symbol}`
+- `GET /trade_history/{symbol}`
+- `POST /trade_history/{symbol}/clear`
+- `GET /api/stock/bars`
+- `POST /api/llm/chat`
+- `GET /backtest`
+- `POST /api/backtest/run`
+- `POST /api/backtest/report`
+
+Swagger UI is available at `/docs` after you start the server.
+
+---
+
+## Signal Request Example
 
 ```http
 POST /signal/{symbol}
 ```
-
-Example:
 
 ```json
 {
@@ -154,7 +204,7 @@ Example:
 }
 ```
 
-Response:
+Example response:
 
 ```json
 {
@@ -170,302 +220,53 @@ Response:
 
 ---
 
-### 2) Execute (Paper Trade)
+## How It Works (High Level)
 
-```http
-POST /execute/{symbol}
-```
-
-* Runs signal
-* Applies risk checks
-* Places **paper order**
-* Stores execution & feedback
-
----
-
-### 3) Trade History
-
-```http
-GET /trade_history/{symbol}
-POST /trade_history/{symbol}/clear
-```
-
----
-
-### 4) Stock Bars
-
-```http
-GET /api/stock/bars?symbol=000100&start=2026-01-07 09:30:00&end=2026-01-07 15:00:00&freq=5
-```
-
----
-
-### 5) LLM Passthrough
-
-```http
-POST /api/llm/chat
-```
-
-Supports:
-
-* plain text chat
-* JSON schema structured output
-
----
-
-### 6) Backtest
-
-* UI: `/backtest`
-* API:
-
-  * `/api/backtest/run`
-  * `/api/backtest/report`
-
----
-
-## Trading Logic
-
-1. Fetch snapshot (AkShare)
-2. Load last N trade history
-3. Build structured prompt:
-
-   * OHLCV bars
-   * account state
-   * constraints
-   * recent trade history
-4. LLM outputs JSON signal
-5. RiskManager validates:
-
-   * trade count
-   * cooldown
-   * confidence
-   * exposure
-   * cash / position
-6. Broker executes paper trade
-7. Persist feedback to DB
-
----
-
-## Risk Controls
-
-* Max trades per day
-* Cooldown between trades
-* Confidence threshold
-* Max portfolio exposure
-* Lot size enforcement
-* Cash / position validation
+1. Authenticate once via `/login` or `/auth/login`.
+2. Fetch a market snapshot and recent bars.
+3. Load today’s intraday trade history from SQLite.
+4. Build a structured, fee-aware prompt (`prompt_builder.py`).
+5. Ask the LLM for strict JSON output.
+6. Apply risk gating (`risk.py`).
+7. Execute a paper order (`broker.py`).
+8. Persist an intraday record for feedback (`trade_history_db.py` + `storage/*`).
 
 ---
 
 ## Logging
 
-All key events are logged:
-
-* signal_start
-* snapshot fetch time
-* bars count
-* LLM latency
-* risk blocks
-* execution result
-* DB persistence errors
+Key events are logged, including snapshot fetch time, bar counts, LLM latency, risk blocks, execution results, and DB persistence errors.
 
 Example:
 
-```
+```text
 signal_done | symbol=000100 action=HOLD conf=0.42 bars=12 hist=3 ms_llm=32000
 ```
 
 ---
 
-## Database
+## Database Notes
 
-* SQLite (async)
-* WAL enabled
-* Tables:
-
-  * executions / intraday records (depends on your ORM naming)
-  * trade_feedback (optional)
-* Auto-created on startup
+- SQLite with async SQLAlchemy
+- WAL pragmas enabled on startup
+- Schema auto-initialized in the app lifespan
+- Includes a `users` table for authentication
+- Primary persistence path: `TradeHistoryDB` -> `storage/repo.py`
 
 ---
 
 ## Safety Notes
 
-* No real broker integration
-* LLM decisions are probabilistic
-* Always test with paper trading
-* Never trust a single model output
+- There is no real broker integration.
+- LLM decisions are probabilistic.
+- Always validate behavior with paper trading and backtests.
 
 ---
 
-## Module Relationship Plots
+## Roadmap Ideas
 
-> These diagrams show **how requests flow through xtrader**, and how the **core modules depend on each other**.
-> They’re intentionally “high-level” so you can understand the app quickly before reading code.
-
-### 1) Request Flow (Signal & Execute)
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User as User/Browser
-    participant API as FastAPI (app.main)
-    participant Strat as StrategyEngine (services/strategy.py)
-    participant Mkt as MarketDataProvider (services/market_data*.py)
-    participant DB as TradeHistoryDB (services/trade_history_db.py)
-    participant Prompt as PromptBuilder (services/prompt_builder.py)
-    participant LLM as LLM Client (services/llm_client.py)
-    participant Risk as RiskManager (services/risk.py)
-    participant Broker as Paper Broker (services/broker.py)
-    participant Store as Storage/Repo (storage/db.py + repo.py)
-
-    User->>API: POST /signal/{symbol}\n(now_ts, account_state)
-    API->>Strat: get_signal(symbol, account, now_ts)
-    Strat->>Mkt: get_snapshot(symbol, end_ts=now_ts)
-    Strat->>DB: list_intraday_today(symbol, now_ts)
-    Strat->>Prompt: build_user_prompt(snapshot, account, constraints, history)
-    Prompt-->>Strat: prompt text
-    Strat->>LLM: chat_json(system, prompt, schema)
-    LLM-->>Strat: TradeSignal JSON
-    Strat-->>API: TradeSignal
-    API-->>User: 200 JSON (signal)
-
-    User->>API: POST /execute/{symbol}\n(now_ts, account_state)
-    API->>Strat: maybe_execute(symbol, account, now_ts)
-    Strat->>Mkt: get_snapshot(...)
-    Strat->>DB: list_intraday_today(...)
-    Strat->>Prompt: build_user_prompt(...)
-    Strat->>LLM: chat_json(...)
-    LLM-->>Strat: TradeSignal JSON
-    Strat->>Risk: can_trade(signal, account, snapshot, suggested_shares)
-    alt blocked
-        Risk-->>Strat: (False, reason)
-        Strat->>DB: append_intraday(status=BLOCKED, record)
-        DB->>Store: write record
-        Strat-->>API: TradeResult(ok=false, reason)
-        API-->>User: 200 JSON (blocked)
-    else allowed
-        Risk-->>Strat: (True, "ok")
-        Strat->>Broker: place_order(request)
-        Broker-->>Strat: TradeResult(ok, message, details)
-        Strat->>DB: append_intraday(status=EXECUTED/FAILED, record)
-        DB->>Store: write record
-        Strat-->>API: TradeResult
-        API-->>User: 200 JSON (result)
-    end
-```
-
-**Interpretation (why this diagram matters):**
-
-* `FastAPI (app.main)` is the **I/O boundary**: it parses input and returns JSON.
-* `StrategyEngine` is the **brain**: snapshot → history → prompt → LLM → risk gate → broker → persistence.
-* `PromptBuilder` creates a **structured, reproducible prompt**, reducing LLM randomness.
-* `RiskManager` is the **hard gate**: even if the LLM says BUY/SELL, risk rules can block it.
-* `TradeHistoryDB + storage/*` forms the **feedback loop**: every decision is persisted and becomes context for later decisions.
-
----
-
-### 2) Dependency Graph (How modules use each other)
-
-```mermaid
-flowchart LR
-    main[app.main (FastAPI routes)]
-
-    strat[services/strategy.py\nStrategyEngine]
-    prompt[services/prompt_builder.py]
-    risk[services/risk.py\nRiskManager]
-    broker[services/broker.py\nPaper Broker]
-    mkt[services/market_data.py\nMarketDataProvider]
-    ak[services/market_data_akshare.py\nAkShare impl]
-    llm[services/llm_client.py\nOpenAI-compat client]
-    th[services/trade_history_db.py\nTradeHistoryDB]
-    cache[services/cache.py]
-
-    repo[storage/repo.py]
-    db[storage/db.py\nAsync SQLAlchemy]
-    orm[storage/orm_models.py]
-
-    models[app/models.py\nPydantic models]
-    modelsllm[app/models_llm.py\nLLM schema models]
-    cfg[app/config.py\n.env settings]
-    log[app/logging_config.py]
-
-    main --> strat
-
-    strat --> mkt
-    mkt --> ak
-
-    strat --> th
-    th --> repo
-    repo --> db
-    repo --> orm
-
-    strat --> prompt
-    prompt --> models
-
-    strat --> llm
-    llm --> cfg
-
-    strat --> risk
-    risk --> cfg
-
-    strat --> broker
-
-    strat --> models
-    llm --> modelsllm
-    prompt --> modelsllm
-
-    main --> cfg
-    main --> log
-
-    mkt -. optional .-> cache
-    th -. optional .-> cache
-```
-
-**Interpretation (how to read this graph):**
-
-* Everything starts at `app.main` (routes) and hands off to `StrategyEngine`.
-* `services/*` are the **business logic layer**:
-
-  * Market side: `market_data.py` (interface) → `market_data_akshare.py` (implementation)
-  * LLM side: `prompt_builder.py` → `llm_client.py`
-  * Control side: `risk.py` and `broker.py`
-  * Memory side: `trade_history_db.py` → `storage/*`
-* `storage/*` is an **implementation detail** behind trade history:
-
-  * `repo.py` runs queries
-  * `db.py` manages engine/session
-  * `orm_models.py` defines tables
-* `models.py / models_llm.py` define **validated contracts** between modules.
-
----
-
-### 3) Feedback Loop (Why history improves decisions)
-
-```mermaid
-flowchart TB
-    A[Execute/Signal Decision] --> B[Persist intraday record\nTradeHistoryDB -> SQLite]
-    B --> C[Next request loads recent records]
-    C --> D[PromptBuilder includes\nhistory + outcomes]
-    D --> E[LLM sees what happened\nand avoids repeating mistakes]
-    E --> A
-```
-
-**Interpretation (the “learning without training” idea):**
-
-* This is not model fine-tuning.
-* It’s **contextual learning**: the LLM is guided by your own recent actions & outcomes stored in SQLite.
-
----
-
-## Roadmap
-
-* [ ] Real broker API
-* [ ] Multi-symbol portfolio
-* [ ] Reinforcement learning feedback loop
-* [ ] Strategy ensembles
-* [ ] Web dashboard
-* [ ] Live PnL tracking
-* [ ] Alert system
-
----
+- Real broker API integration
+- Multi-symbol portfolio management
+- Strategy ensembles
+- Live PnL tracking and alerts
+- Web dashboard improvements
