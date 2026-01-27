@@ -86,6 +86,8 @@ class TradeHistoryDB:
         symbol: str,
         *,
         now_ts: Optional[str],
+        user_id: int,
+        account_id: str = "default",
         limit: Optional[int] = None,
         include_json: bool = False,
     ) -> List[Dict[str, Any]]:
@@ -100,7 +102,14 @@ class TradeHistoryDB:
 
         async with session_scope(self.session_factory) as s:
             repo = IntradayTradeRepo(s)
-            rows = await repo.list_by_day(symbol, day, limit=limit_n, asc=True)
+            rows = await repo.list_by_day(
+                symbol,
+                day,
+                user_id=int(user_id),
+                account_id=str(account_id),
+                limit=limit_n,
+                asc=True,
+            )
 
         out: List[Dict[str, Any]] = []
         for r in rows:
@@ -129,6 +138,9 @@ class TradeHistoryDB:
 
             rec: Dict[str, Any] = {
                 "decision_ts": fmt_shanghai(dt_sh) if dt_sh else None,
+                "user_id": int(getattr(r, "user_id", 0) or 0),
+                "username": getattr(r, "username", None),
+                "account_id": getattr(r, "account_id", None),
 
                 "action": getattr(r, "action", None),
                 "expected_direction": getattr(r, "expected_direction", None),
@@ -177,6 +189,8 @@ class TradeHistoryDB:
         symbol: str,
         *,
         now_ts: Optional[str],
+        user_id: int,
+        account_id: str = "default",
         record: Dict[str, Any],
     ) -> None:
         """
@@ -214,6 +228,9 @@ class TradeHistoryDB:
                 return int(default)
 
         row = {
+            "user_id": int(record.get("user_id") or user_id or 0),
+            "username": str(record.get("username") or ""),
+            "account_id": str(record.get("account_id") or account_id or "default"),
             "symbol": symbol,
             "trading_day_sh": day,
             "decision_ts": decision_dt_naive,
@@ -254,7 +271,7 @@ class TradeHistoryDB:
             repo = IntradayTradeRepo(s)
             await repo.add(row)
 
-    async def clear(self, symbol: str) -> int:
+    async def clear(self, symbol: str, *, user_id: int, account_id: str = "default") -> int:
         async with session_scope(self.session_factory) as s:
             repo = IntradayTradeRepo(s)
-            return await repo.clear_symbol(symbol)
+            return await repo.clear_symbol_for_user(symbol=symbol, user_id=int(user_id), account_id=str(account_id))

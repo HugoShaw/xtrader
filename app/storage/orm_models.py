@@ -34,6 +34,10 @@ class IntradayTradeORM(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
+    user_id: Mapped[int] = mapped_column(Integer, index=True, default=0)
+    username: Mapped[str] = mapped_column(String(64), index=True, default="")
+    account_id: Mapped[str] = mapped_column(String(64), index=True, default="default")
+
     symbol: Mapped[str] = mapped_column(String(16), index=True)
     trading_day_sh: Mapped[date] = mapped_column(Date, index=True)
     decision_ts: Mapped[datetime] = mapped_column(DateTime, index=True)
@@ -74,3 +78,11 @@ class IntradayTradeORM(Base):
 
 Index("ix_intraday_trades_symbol_day_ts", IntradayTradeORM.symbol, IntradayTradeORM.trading_day_sh, IntradayTradeORM.decision_ts)
 Index("ix_intraday_trades_symbol_ts", IntradayTradeORM.symbol, IntradayTradeORM.decision_ts)
+Index(
+    "ix_intraday_trades_user_account_symbol_day_ts",
+    IntradayTradeORM.user_id,
+    IntradayTradeORM.account_id,
+    IntradayTradeORM.symbol,
+    IntradayTradeORM.trading_day_sh,
+    IntradayTradeORM.decision_ts,
+)

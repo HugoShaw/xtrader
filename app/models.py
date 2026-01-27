@@ -133,8 +133,11 @@ class TradeResult(BaseModel):
 
 @dataclass(frozen=True)
 class AccountState:
+    user_id: int
+    username: str
     cash_cny: float
     position_shares: int
+    account_id: str = "default"
     avg_cost_cny: Optional[float] = None
     unrealized_pnl_cny: Optional[float] = None
 
@@ -157,10 +160,19 @@ class ExecutionConstraints:
 # Request models for /signal and /execute
 # -------------------------
 class AccountStateIn(BaseModel):
+    account_id: str = Field(default="default", min_length=1, max_length=64)
     cash_cny: float = Field(..., ge=0.0)
     position_shares: int = Field(..., ge=0)
     avg_cost_cny: Optional[float] = None
     unrealized_pnl_cny: Optional[float] = None
+
+    @field_validator("account_id")
+    @classmethod
+    def _normalize_account_id(cls, v: str) -> str:
+        vv = str(v or "").strip()
+        if not vv:
+            raise ValueError("account_id is required")
+        return vv
 
 
 class MarketOptionsIn(BaseModel):

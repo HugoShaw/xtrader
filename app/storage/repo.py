@@ -22,12 +22,16 @@ class IntradayTradeRepo:
         symbol: str,
         trading_day_sh: date,
         *,
+        user_id: int,
+        account_id: str,
         limit: int = 50,
         asc: bool = True,
     ) -> List[IntradayTradeORM]:
         order = IntradayTradeORM.decision_ts.asc() if asc else IntradayTradeORM.decision_ts.desc()
         stmt = (
             select(IntradayTradeORM)
+            .where(IntradayTradeORM.user_id == int(user_id))
+            .where(IntradayTradeORM.account_id == str(account_id))
             .where(IntradayTradeORM.symbol == symbol)
             .where(IntradayTradeORM.trading_day_sh == trading_day_sh)
             .order_by(order)
@@ -51,5 +55,15 @@ class IntradayTradeRepo:
 
     async def clear_symbol(self, symbol: str) -> int:
         stmt = delete(IntradayTradeORM).where(IntradayTradeORM.symbol == symbol)
+        res = await self.s.execute(stmt)
+        return int(res.rowcount or 0)
+
+    async def clear_symbol_for_user(self, *, symbol: str, user_id: int, account_id: str) -> int:
+        stmt = (
+            delete(IntradayTradeORM)
+            .where(IntradayTradeORM.user_id == int(user_id))
+            .where(IntradayTradeORM.account_id == str(account_id))
+            .where(IntradayTradeORM.symbol == symbol)
+        )
         res = await self.s.execute(stmt)
         return int(res.rowcount or 0)

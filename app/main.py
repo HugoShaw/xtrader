@@ -249,6 +249,9 @@ async def signal(
         code = normalize_cn_symbol(symbol)
 
         acc = AccountState(
+            user_id=int(user.id),
+            username=str(user.username),
+            account_id=str(ctx.account_state.account_id),
             cash_cny=ctx.account_state.cash_cny,
             position_shares=ctx.account_state.position_shares,
             avg_cost_cny=ctx.account_state.avg_cost_cny,
@@ -299,6 +302,9 @@ async def execute(
         code = normalize_cn_symbol(symbol)
 
         acc = AccountState(
+            user_id=int(user.id),
+            username=str(user.username),
+            account_id=str(ctx.account_state.account_id),
             cash_cny=ctx.account_state.cash_cny,
             position_shares=ctx.account_state.position_shares,
             avg_cost_cny=ctx.account_state.avg_cost_cny,
@@ -334,20 +340,32 @@ async def get_trade_history(
     now_ts: str = Query(..., description="YYYY-MM-DD HH:MM:SS"),
     limit: int = Query(50, ge=1, le=200),
     include_json: bool = Query(False),
+    account_id: str = Query("default", min_length=1, max_length=64, description="Account identifier"),
     user: AuthenticatedUser = Depends(require_user),
 ):
     code = normalize_cn_symbol(symbol)
     trade_history_db: TradeHistoryDB = app.state.trade_history_db
-    recs = await trade_history_db.list_intraday_today(code, now_ts=now_ts, limit=limit, include_json=include_json)
-    return {"symbol": code, "count": len(recs), "records": recs}
+    recs = await trade_history_db.list_intraday_today(
+        code,
+        now_ts=now_ts,
+        user_id=int(user.id),
+        account_id=str(account_id),
+        limit=limit,
+        include_json=include_json,
+    )
+    return {"symbol": code, "account_id": account_id, "count": len(recs), "records": recs}
 
 
 @app.post("/trade_history/{symbol}/clear", tags=["trading"])
-async def clear_trade_history(symbol: str, user: AuthenticatedUser = Depends(require_user)):
+async def clear_trade_history(
+    symbol: str,
+    account_id: str = Query("default", min_length=1, max_length=64, description="Account identifier"),
+    user: AuthenticatedUser = Depends(require_user),
+):
     code = normalize_cn_symbol(symbol)
     trade_history_db: TradeHistoryDB = app.state.trade_history_db
-    n = await trade_history_db.clear(code)
-    return {"ok": True, "symbol": code, "deleted": n}
+    n = await trade_history_db.clear(code, user_id=int(user.id), account_id=str(account_id))
+    return {"ok": True, "symbol": code, "account_id": account_id, "deleted": n}
 
 
 # TODO: 增加隔日交易，隔周交易，和隔月交易的接口

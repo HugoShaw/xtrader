@@ -120,6 +120,17 @@
     }
 
     .historyList { padding: 10px 14px 14px; display: grid; gap: 10px; }
+    .historyToggle {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px dashed rgba(255,255,255,.16);
+      background: rgba(255,255,255,.04);
+      color: #e8eefc;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .historyToggle:hover { background: rgba(255,255,255,.07); }
     .histItem {
       border: 1px solid rgba(255,255,255,.10);
       background: rgba(0,0,0,.25);
@@ -673,6 +684,7 @@
   // -----------------------------
   const $ = (id) => document.getElementById(id);
   const TZ = "Asia/Shanghai";
+  const ACCOUNT_ID_DEFAULT = "default";
 
   function shanghaiNowYmdHms() {
     const dt = new Date();
@@ -905,32 +917,42 @@ function addMinutesToShanghaiTs(ts, minutes) {
 }
 
 async function fetchBarsFromApi(symbol, start, end, freq = "1", limit = null) {
-  let url =
-    `/api/stock/bars?symbol=${encodeURIComponent(symbol)}` +
-    `&start=${encodeURIComponent(start)}` +
-    `&end=${encodeURIComponent(end)}` +
-    `&freq=${encodeURIComponent(freq)}`;
+  try {
+    let url =
+      `/api/stock/bars?symbol=${encodeURIComponent(symbol)}` +
+      `&start=${encodeURIComponent(start)}` +
+      `&end=${encodeURIComponent(end)}` +
+      `&freq=${encodeURIComponent(freq)}`;
 
-  // IMPORTANT: omit limit entirely when null/undefined/"" to get ALL rows
-  if (limit !== null && limit !== undefined && String(limit).trim() !== "") {
-    url += `&limit=${encodeURIComponent(String(limit))}`;
+    // IMPORTANT: omit limit entirely when null/undefined/"" to get ALL rows
+    if (limit !== null && limit !== undefined && String(limit).trim() !== "") {
+      url += `&limit=${encodeURIComponent(String(limit))}`;
+    }
+
+    const resp = await fetch(url, {
+      method: "GET",
+      credentials: "same-origin",
+    });
+    const rawText = await resp.text();
+    let data;
+    try { data = JSON.parse(rawText); } catch { data = { raw: rawText }; }
+
+    if (resp.status === 401) {
+      // Protected by auth; prompt quick login and stop this flow.
+      try { openLoginModal(); } catch {}
+      throw new Error("Not authenticated. Please log in.");
+    }
+    if (!resp.ok) {
+      // Requirement: stop auto execute when bars API fails.
+      if (timer) stopAuto();
+      throw new Error(`bars API failed: HTTP ${resp.status} ${resp.statusText} :: ${rawText}`);
+    }
+    return data;
+  } catch (e) {
+    // Network or parsing failure: also stop auto execute.
+    if (timer) stopAuto();
+    throw e;
   }
-
-  const resp = await fetch(url, {
-    method: "GET",
-    credentials: "same-origin",
-  });
-  const rawText = await resp.text();
-  let data;
-  try { data = JSON.parse(rawText); } catch { data = { raw: rawText }; }
-
-  if (resp.status === 401) {
-    // Protected by auth; prompt quick login and stop this flow.
-    try { openLoginModal(); } catch {}
-    throw new Error("Not authenticated. Please log in.");
-  }
-  if (!resp.ok) throw new Error(`bars API failed: HTTP ${resp.status} ${resp.statusText} :: ${rawText}`);
-  return data;
 }
 
 
@@ -1244,6 +1266,7 @@ function drawTopLegend(ctx, items, padL, padT, cssW, padR) {
 
   function buildPayload() {
     const account_state = {
+      account_id: ACCOUNT_ID_DEFAULT,
       cash_cny: safeNumber($("cash").value, 0),
       position_shares: safeNumber($("pos").value, 0),
       avg_cost_cny: safeNumber($("avgCost").value, 0),
@@ -2074,7 +2097,15 @@ function drawCandlesOnCanvas(canvas, ohlc, markers = [], view = null) {
 
   const padL = 40, padR = 60, padT = 10, padB = 22;
   const W = Math.max(1, cssW - padL - padR);
-  const H = Math.max(1, cssH - padT - padB);
+  const plotH = Math.max(1, cssH - padT - padB);
+  const volRatio = 0.24;
+  const volGap = 6;
+  const volH = Math.max(60, Math.floor(plotH * volRatio));
+  const priceH = Math.max(40, plotH - volH - volGap);
+  const priceTop = padT;
+  const priceBottom = priceTop + priceH;
+  const volTop = priceBottom + volGap;
+  const volBottom = volTop + volH;
 
   canvas.__chartGeom = { cssW, cssH, padL, padR, padT, padB };
 
@@ -2092,7 +2123,7 @@ function drawCandlesOnCanvas(canvas, ohlc, markers = [], view = null) {
   minP -= range * padPct;
   maxP += range * padPct;
 
-  const yOf = (p) => padT + (maxP - p) * (H / (maxP - minP));
+  const yOf = (p) => priceTop + (maxP - p) * (priceH / (maxP - minP));
   const xStep = W / Math.max(1, bars.length - 1);
   const xOfIdx = (i) => padL + i * xStep;
 
@@ -2100,9 +2131,9 @@ function drawCandlesOnCanvas(canvas, ohlc, markers = [], view = null) {
   ctx.strokeStyle = "rgba(255,255,255,.10)";
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(padL, padT);
-  ctx.lineTo(padL, padT + H);
-  ctx.lineTo(padL + W, padT + H);
+  ctx.moveTo(padL, priceTop);
+  ctx.lineTo(padL, priceBottom);
+  ctx.lineTo(padL + W, priceBottom);
   ctx.stroke();
 
   // Y-axis (right-side) ticks + labels
@@ -2114,7 +2145,7 @@ function drawCandlesOnCanvas(canvas, ohlc, markers = [], view = null) {
   ctx.textBaseline = "middle";
   for (let i = 0; i <= tickCount; i++) {
     const frac = i / tickCount;
-    const y = padT + frac * H;
+    const y = priceTop + frac * priceH;
     const price = maxP - frac * (maxP - minP);
     ctx.strokeStyle = "rgba(255,255,255,.08)";
     ctx.beginPath();
@@ -2124,6 +2155,39 @@ function drawCandlesOnCanvas(canvas, ohlc, markers = [], view = null) {
     ctx.fillText(price.toFixed(3), cssW - 6, y);
   }
   ctx.restore();
+
+  // volume bars (bottom panel)
+  let maxV = 0;
+  for (const b of bars) {
+    const v = Number.isFinite(b.v) ? b.v : 0;
+    if (v > maxV) maxV = v;
+  }
+  if (maxV > 0) {
+    const volY = (v) => volTop + (maxV - v) * (volH / maxV);
+    const bwVol = Math.max(1, Math.min(12, xStep * 0.8));
+
+    // volume panel border
+    ctx.strokeStyle = "rgba(255,255,255,.08)";
+    ctx.beginPath();
+    ctx.moveTo(padL, volTop);
+    ctx.lineTo(padL, volBottom);
+    ctx.lineTo(padL + W, volBottom);
+    ctx.stroke();
+
+    for (let i = 0; i < bars.length; i++) {
+      const b = bars[i];
+      const v = Number.isFinite(b.v) ? b.v : 0;
+      if (v <= 0) continue;
+
+      const x = xOfIdx(i);
+      const up = b.c >= b.o;
+      const y = volY(v);
+      const h = Math.max(1, volBottom - y);
+
+      ctx.fillStyle = up ? "rgba(64,192,128,.45)" : "rgba(255,107,107,.40)";
+      ctx.fillRect(x - bwVol / 2, y, bwVol, h);
+    }
+  }
 
   // candles
   for (let i = 0; i < bars.length; i++) {
@@ -2185,7 +2249,7 @@ function drawCandlesOnCanvas(canvas, ohlc, markers = [], view = null) {
     // If the distance between current label and last label is too small, skip drawing this label
     if (x - lastX > textWidth + labelPadding) {
       // Draw the datetime label at the bottom of each candle
-      ctx.fillText(dateStr, x, H + padT + padding);
+      ctx.fillText(dateStr, x, volBottom + padding);
       lastX = x;  // Update the position of the last label
     }
   }
@@ -2490,6 +2554,9 @@ function bindCandleHover(canvas) {
   // -----------------------------
   const HISTORY_LIMIT = 30;
   let historyRecords = [];
+  let lastHistoryRows = [];
+  const HISTORY_VISIBLE_LIMIT = 10;
+  let historyExpanded = false;
   const HISTORY_SNAPSHOT_REFRESH_MS = 60_000;
   let historySnapshotTimer = null;
 
@@ -2573,6 +2640,7 @@ function bindCandleHover(canvas) {
   async function renderHistoryFromBackend(records) {
     const container = $("history");
     const rows = Array.isArray(records) ? records : [];
+    lastHistoryRows = rows;
     const sorted = rows.slice().sort((a, b) => {
       const ta = parseShanghaiTsMs(a?.decision_ts) ?? 0;
       const tb = parseShanghaiTsMs(b?.decision_ts) ?? 0;
@@ -2587,7 +2655,12 @@ function bindCandleHover(canvas) {
       return;
     }
 
-    container.innerHTML = historyRecords.map((r, idx) => {
+    const total = historyRecords.length;
+    const visibleCount = historyExpanded ? total : Math.min(HISTORY_VISIBLE_LIMIT, total);
+    const visibleItems = historyRecords.slice(0, visibleCount);
+    const hiddenCount = Math.max(0, total - visibleCount);
+
+    container.innerHTML = visibleItems.map((r, idx) => {
       const sym = `<code>${escapeHtml(String(r.symbol || $("symbol").value || "—").trim() || "—")}</code>`;
       const ts = r.decision_ts || "—";
       const action = r.action ? actionPill(r.action) : "";
@@ -2631,6 +2704,20 @@ function bindCandleHover(canvas) {
         setTimeout(() => (btn.textContent = "Copy"), 1200);
       };
     });
+
+    if (total > HISTORY_VISIBLE_LIMIT) {
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "historyToggle";
+      toggle.textContent = historyExpanded
+        ? `^ Show only first ${HISTORY_VISIBLE_LIMIT}`
+        : `v Show ${hiddenCount} more`;
+      toggle.addEventListener("click", () => {
+        historyExpanded = !historyExpanded;
+        renderHistoryFromBackend(lastHistoryRows);
+      });
+      container.appendChild(toggle);
+    }
 
     // summary
     renderSummaryFromDb(normalizeSymbol($("symbol").value), historyRecords);
@@ -2779,8 +2866,22 @@ async function renderIndividualChartsFromHistory(symbol, records) {
   const freq = String($("marketMinPeriod").value || "1").trim() || "1";
   const { start, end } = shanghaiSafeBarsRangeFromRecords(candidates);
 
-  const payload = await fetchBarsFromApi(sym, start, end, freq, null); // no limit
-  let currentOhlc = extractBarsFromBarsApiPayload(payload);
+  let currentOhlc = [];
+  try {
+    const payload = await fetchBarsFromApi(sym, start, end, freq, null); // no limit
+    currentOhlc = extractBarsFromBarsApiPayload(payload);
+  } catch (e) {
+    // Do not block trade history rendering if bars fail.
+    stopHistorySnapshotAutoRefresh();
+    const card = document.getElementById("chartCard_0");
+    const hint = card?.querySelector(".chartHint");
+    if (hint) {
+      hint.innerHTML = `<span class="pill bad">bars load failed</span> <span class="muted">${escapeHtml(String(e))}</span>`;
+    }
+    renderError(`Bars API failed: ${e}`, "", { symbol: sym, start, end, freq });
+    // Requirement: stop auto execute when bars API fails.
+    if (timer) stopAuto();
+  }
 
   let currentMarkers = candidates
     .map(makeMarkerFromDbRecord)
@@ -2848,13 +2949,18 @@ async function renderIndividualChartsFromHistory(symbol, records) {
     const url =
       `/trade_history/${encodeURIComponent(sym)}` +
       `?now_ts=${encodeURIComponent(nowTs)}` +
+      `&account_id=${encodeURIComponent(ACCOUNT_ID_DEFAULT)}` +
       `&limit=${encodeURIComponent(String(limit))}`;
 
-    const resp = await fetch(url, { method: "GET" });
+    const resp = await fetch(url, { method: "GET", credentials: "same-origin" });
     const rawText = await resp.text();
     let data;
     try { data = JSON.parse(rawText); } catch { data = { raw: rawText }; }
 
+    if (resp.status === 401) {
+      try { openLoginModal(); } catch {}
+      throw new Error("Not authenticated. Please log in.");
+    }
     if (!resp.ok) {
       renderError(`History API failed: HTTP ${resp.status} ${resp.statusText}`, pretty(data), { symbol: sym });
       return { symbol: sym, count: 0, records: [] };
@@ -2883,6 +2989,23 @@ async function renderIndividualChartsFromHistory(symbol, records) {
   // -----------------------------
   let running = false;
   let timer = null;
+  const AUTO_STATE_KEY = "xtrader_auto_running_v1";
+
+  function persistAutoState(isRunning) {
+    try {
+      localStorage.setItem(AUTO_STATE_KEY, isRunning ? "1" : "0");
+    } catch (e) {
+      // ignore storage errors
+    }
+  }
+
+  function shouldResumeAuto() {
+    try {
+      return localStorage.getItem(AUTO_STATE_KEY) === "1";
+    } catch (e) {
+      return false;
+    }
+  }
 
   function currentRouteForSymbol(symbol) {
     return (mode === "signal")
@@ -2972,6 +3095,7 @@ async function renderIndividualChartsFromHistory(symbol, records) {
     $("btnStart").disabled = true;
     $("btnStop").disabled = false;
     setRunState("running", "info");
+    persistAutoState(true);
 
     callOnce();
     timer = setInterval(callOnce, Math.floor(freq * 1000));
@@ -2985,6 +3109,7 @@ async function renderIndividualChartsFromHistory(symbol, records) {
     $("btnStart").disabled = false;
     $("btnStop").disabled = true;
     setRunState("idle", "info");
+    persistAutoState(false);
   }
 
   function clearOutput() {
@@ -3055,11 +3180,25 @@ async function renderIndividualChartsFromHistory(symbol, records) {
     btnLogin.classList.remove("authHidden");
   }
 
+  function handleAuthExpired() {
+    // Prefer modal; fall back to redirect if modal isn't available.
+    if (loginModal) {
+      try { openLoginModal(); return; } catch {}
+    }
+    try {
+      const next = encodeURIComponent(window.location.pathname + window.location.search);
+      window.location.href = `/login?next=${next}`;
+    } catch {
+      window.location.href = "/login";
+    }
+  }
+
   async function fetchMe() {
     try {
       const res = await fetch("/auth/me", { credentials: "same-origin" });
       if (!res.ok) {
         renderAuth(null);
+        if (res.status === 401) handleAuthExpired();
         return null;
       }
       const data = await res.json();
@@ -3183,6 +3322,15 @@ async function renderIndividualChartsFromHistory(symbol, records) {
     const sym = normalizeSymbol($("symbol").value);
     refreshHistory(sym);
   });
+
+  // Resume auto-run after refresh if it was previously running.
+  // Wait a tick so defaults are applied and auth check has a chance to run.
+  if (shouldResumeAuto()) {
+    setTimeout(() => {
+      if (!$("btnStop").disabled) return;
+      startAuto();
+    }, 0);
+  }
 </script>
 </body>
 </html>

@@ -223,6 +223,7 @@ class StrategyEngine:
         self,
         *,
         symbol: str,
+        account: AccountState,
         now_ts_sh: str,
         signal: TradeSignal,
         snapshot: MarketSnapshot,
@@ -260,6 +261,9 @@ class StrategyEngine:
 
             record: Dict[str, Any] = {
                 "decision_ts": now_ts_sh,
+                "user_id": int(getattr(account, "user_id", 0) or 0),
+                "username": str(getattr(account, "username", "") or ""),
+                "account_id": str(getattr(account, "account_id", "default") or "default"),
 
                 "action": getattr(signal, "action", ""),
                 "expected_direction": getattr(signal, "expected_direction", None),
@@ -294,7 +298,13 @@ class StrategyEngine:
                 "realized_pnl_cny": _safe_float(realized_pnl_cny),
             }
 
-            await self.trade_history_db.append_intraday(symbol=symbol, now_ts=now_ts_sh, record=record)
+            await self.trade_history_db.append_intraday(
+                symbol=symbol,
+                now_ts=now_ts_sh,
+                user_id=int(record["user_id"]),
+                account_id=str(record["account_id"]),
+                record=record,
+            )
         except Exception as e:
             logger.warning("intraday_save_failed | symbol=%s err=%s: %s", symbol, type(e).__name__, e)
 
@@ -365,6 +375,8 @@ class StrategyEngine:
             intraday_records_today = await self.trade_history_db.list_intraday_today(
                 symbol=sym,
                 now_ts=now_ts_sh,
+                user_id=int(getattr(account, "user_id", 0) or 0),
+                account_id=str(getattr(account, "account_id", "default") or "default"),
                 limit=self.trade_history_limit,
             )
         except Exception as e:
@@ -504,6 +516,7 @@ class StrategyEngine:
             )
             await self._persist_intraday_record(
                 symbol=sym,
+                account=account,
                 now_ts_sh=decision_ts_sh,
                 signal=signal,
                 snapshot=snapshot,
@@ -545,6 +558,7 @@ class StrategyEngine:
             )
             await self._persist_intraday_record(
                 symbol=sym,
+                account=account,
                 now_ts_sh=decision_ts_sh,
                 signal=signal,
                 snapshot=snapshot,
@@ -627,6 +641,7 @@ class StrategyEngine:
 
         await self._persist_intraday_record(
             symbol=sym,
+            account=account,
             now_ts_sh=decision_ts_sh,
             signal=signal,
             snapshot=snapshot,
