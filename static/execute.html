@@ -143,6 +143,13 @@
       display: grid;
       gap: 8px;
     }
+    .chartCard.snapshot {
+      border: 1px solid rgba(110,168,254,.28);
+      background:
+        radial-gradient(1200px 300px at 10% -20%, rgba(110,168,254,.18), transparent 55%),
+        linear-gradient(180deg, rgba(9,12,20,.9), rgba(6,9,16,.95));
+      box-shadow: 0 18px 40px rgba(0,0,0,.35);
+    }
     .chartTop {
       display: flex;
       align-items: baseline;
@@ -155,6 +162,11 @@
       padding: 6px 6px;
     }
     .chartTop:hover { background: rgba(255,255,255,.04); }
+    .chartCard.snapshot .chartTop {
+      padding: 10px 10px;
+      border: 1px solid rgba(255,255,255,.08);
+      background: rgba(255,255,255,.03);
+    }
 
     .chartTop .title {
       font-size: 12px;
@@ -163,6 +175,22 @@
       display:flex;
       gap: 8px;
       align-items: center;
+    }
+    .chartCard.snapshot .chartTop .title {
+      font-size: 13px;
+      letter-spacing: .2px;
+    }
+    .chartCard.snapshot .chartTop .title .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(110,168,254,.45);
+      background: rgba(110,168,254,.18);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .6px;
     }
     .chartTop .title .chev {
       display:inline-block;
@@ -211,7 +239,7 @@
     .toolBtn {
       font-size: 12px;
       padding: 7px 10px;
-      border-radius: 10px;
+      border-radius: 999px;
       border: 1px solid rgba(255,255,255,.14);
       background: rgba(255,255,255,.06);
       color: #e8eefc;
@@ -225,6 +253,13 @@
       border-color: rgba(110,168,254,.45);
       opacity: 1;
     }
+    .chartCard.snapshot .toolBtn {
+      padding: 7px 12px;
+      border-color: rgba(110,168,254,.4);
+      background: rgba(110,168,254,.16);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.05);
+    }
+    .chartCard.snapshot .toolBtn:hover { background: rgba(110,168,254,.22); }
 
     .zoomBox {
       position: absolute;
@@ -267,6 +302,24 @@
     }
     .markerTip .dot.buy { background: rgba(110,168,254,.95); }
     .markerTip .dot.sell { background: rgba(255,107,107,.95); }
+
+    .candleTip {
+      position: absolute;
+      pointer-events: none;
+      transform: translate(-50%, -115%);
+      background: rgba(12, 16, 26, .92);
+      border: 1px solid rgba(255,255,255,.18);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 12px;
+      line-height: 1.25;
+      color: #e8eefc;
+      box-shadow: 0 10px 30px rgba(0,0,0,.35);
+      display: none;
+      white-space: nowrap;
+    }
+    .candleTip .t { font-weight: 700; }
+    .candleTip .sub { opacity: .85; font-size: 11px; margin-top: 2px; }
 
     .chartCard.folded .chartWrap,
     .chartCard.folded .chartHint { display: none; }
@@ -527,8 +580,8 @@
       </div>
     </div>
 
-    <div id="history" class="historyList">(empty)</div>
     <div class="historyList" id="chartsList"></div>
+    <div id="history" class="historyList">(empty)</div>
 
   </div>
 </div>
@@ -1930,7 +1983,7 @@ function drawCandlesOnCanvas(canvas, ohlc, markers = [], view = null) {
     return;
   }
 
-  const padL = 40, padR = 12, padT = 10, padB = 22;
+  const padL = 40, padR = 60, padT = 10, padB = 22;
   const W = Math.max(1, cssW - padL - padR);
   const H = Math.max(1, cssH - padT - padB);
 
@@ -1962,6 +2015,26 @@ function drawCandlesOnCanvas(canvas, ohlc, markers = [], view = null) {
   ctx.lineTo(padL, padT + H);
   ctx.lineTo(padL + W, padT + H);
   ctx.stroke();
+
+  // Y-axis (right-side) ticks + labels
+  const tickCount = 5;
+  ctx.save();
+  ctx.fillStyle = "rgba(232,238,252,.85)";
+  ctx.font = "11px system-ui";
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  for (let i = 0; i <= tickCount; i++) {
+    const frac = i / tickCount;
+    const y = padT + frac * H;
+    const price = maxP - frac * (maxP - minP);
+    ctx.strokeStyle = "rgba(255,255,255,.08)";
+    ctx.beginPath();
+    ctx.moveTo(padL, y);
+    ctx.lineTo(padL + W, y);
+    ctx.stroke();
+    ctx.fillText(price.toFixed(3), cssW - 6, y);
+  }
+  ctx.restore();
 
   // candles
   for (let i = 0; i < bars.length; i++) {
@@ -2110,6 +2183,74 @@ function drawCandlesOnCanvas(canvas, ohlc, markers = [], view = null) {
   window.__markerHit.markersPx = placed;
   window.__markerHit.tipEl = canvas.parentElement?.querySelector(".markerTip") || null;
   bindMarkerHover(canvas);
+
+  bindCandleHover(canvas);
+}
+
+function bindCandleHover(canvas) {
+  if (!canvas) return;
+  if (canvas.__candleHoverBound) return;
+  canvas.__candleHoverBound = true;
+
+  const tipEl = canvas.parentElement?.querySelector(".candleTip") || null;
+  if (!tipEl) return;
+
+  const getMousePos = (evt) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = evt.clientX - rect.left;
+    const y = evt.clientY - rect.top;
+    return { x, y, rect };
+  };
+
+  const hideTip = () => {
+    tipEl.style.display = "none";
+  };
+
+  const showTip = (bar, clientX, clientY, rect) => {
+    const timeStr = new Intl.DateTimeFormat("en-GB", {
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit"
+    }).format(new Date(bar.t));
+
+    tipEl.innerHTML = `
+      <div class="t">${escapeHtml(timeStr)}</div>
+      <div class="sub">O=${escapeHtml(bar.o.toFixed(3))} H=${escapeHtml(bar.h.toFixed(3))} L=${escapeHtml(bar.l.toFixed(3))} C=${escapeHtml(bar.c.toFixed(3))}</div>
+    `;
+
+    const pad = 8;
+    tipEl.style.display = "block";
+    let left = clientX - rect.left;
+    let top = clientY - rect.top;
+    const tw = tipEl.offsetWidth;
+    const th = tipEl.offsetHeight;
+    left = clamp(left, pad + tw / 2, rect.width - pad - tw / 2);
+    top = clamp(top, pad + th, rect.height - pad);
+    tipEl.style.left = left + "px";
+    tipEl.style.top = top + "px";
+  };
+
+  const onMove = (evt) => {
+    const bars = canvas.__barsShown;
+    const geom = canvas.__chartGeom;
+    if (!bars || bars.length < 1 || !geom) return;
+
+    const { x, rect } = getMousePos(evt);
+    const { padL, padR, cssW } = geom;
+    const W = Math.max(1, cssW - padL - padR);
+    const n = bars.length;
+    const xStep = W / Math.max(1, n - 1);
+    const xx = clamp(x, padL, padL + W);
+    const iFloat = (xx - padL) / xStep;
+    const idx = Math.max(0, Math.min(n - 1, Math.round(iFloat)));
+    const bar = bars[idx];
+    if (!bar) return;
+    showTip(bar, evt.clientX, evt.clientY, rect);
+  };
+
+  const onLeave = () => hideTip();
+
+  canvas.addEventListener("mousemove", onMove);
+  canvas.addEventListener("mouseleave", onLeave);
 }
 
   // NOTE: candle drawing + marker building from DB left as in your original version.
@@ -2260,6 +2401,77 @@ function drawCandlesOnCanvas(canvas, ohlc, markers = [], view = null) {
   // -----------------------------
   const HISTORY_LIMIT = 30;
   let historyRecords = [];
+  const HISTORY_SNAPSHOT_REFRESH_MS = 60_000;
+  let historySnapshotTimer = null;
+
+  function shanghaiNowParts() {
+    const parts = new Intl.DateTimeFormat("sv-SE", {
+      timeZone: TZ,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+      weekday: "short",
+      hour12: false
+    }).formatToParts(new Date());
+
+    const get = (type) => parts.find(p => p.type === type)?.value ?? "";
+    return {
+      year: Number(get("year")),
+      month: Number(get("month")),
+      day: Number(get("day")),
+      hour: Number(get("hour")),
+      minute: Number(get("minute")),
+      second: Number(get("second")),
+      weekday: get("weekday") || ""
+    };
+  }
+
+  function isShanghaiTradingTimeNow() {
+    const p = shanghaiNowParts();
+    const wd = String(p.weekday || "").toLowerCase();
+    const isWeekday = !["sat", "sun"].includes(wd);
+    if (!isWeekday) return false;
+    const mins = (p.hour * 60) + p.minute;
+    const amOpen = 9 * 60 + 30;
+    const amClose = 11 * 60 + 30;
+    const pmOpen = 13 * 60;
+    const pmClose = 15 * 60;
+    const inMorning = mins >= amOpen && mins < amClose;
+    const inAfternoon = mins >= pmOpen && mins <= pmClose;
+    return inMorning || inAfternoon;
+  }
+
+  function shanghaiLastTradingYmd() {
+    const p = shanghaiNowParts();
+    const nowMs = Date.UTC(p.year, p.month - 1, p.day, p.hour - 8, p.minute, p.second);
+    let d = new Date(nowMs);
+    let offsetDays = 0;
+
+    const isBeforeOpen = (p.hour * 60 + p.minute) < (9 * 60 + 30);
+    if (isBeforeOpen) offsetDays = 1;
+
+    const wd = String(p.weekday || "").toLowerCase();
+    if (wd === "sat") offsetDays = Math.max(offsetDays, 1);
+    if (wd === "sun") offsetDays = Math.max(offsetDays, 2);
+
+    // If it is Monday before open, go back to Friday
+    if (wd === "mon" && isBeforeOpen) offsetDays = Math.max(offsetDays, 3);
+
+    if (offsetDays > 0) {
+      d = new Date(d.getTime() - offsetDays * 24 * 60 * 60 * 1000);
+    }
+    return toShTsYmdHmsFromMs(d.getTime()).slice(0, 10);
+  }
+
+  function shanghaiSafeBarsRangeFromRecords(records) {
+    if (records && records.length) {
+      return shanghaiRangeFromRecords(records, 1);
+    }
+    if (isShanghaiTradingTimeNow()) {
+      return shanghaiRecentDaysRangeHms(1);
+    }
+    const ymd = shanghaiLastTradingYmd();
+    return { start: `${ymd} 00:00:00`, end: `${ymd} 23:59:59` };
+  }
 
   function statusPillFromDbStatus(status) {
     const s = String(status || "").toUpperCase();
@@ -2272,12 +2484,17 @@ function drawCandlesOnCanvas(canvas, ohlc, markers = [], view = null) {
   async function renderHistoryFromBackend(records) {
     const container = $("history");
     const rows = Array.isArray(records) ? records : [];
-    historyRecords = rows.slice(0, HISTORY_LIMIT);
+    const sorted = rows.slice().sort((a, b) => {
+      const ta = parseShanghaiTsMs(a?.decision_ts) ?? 0;
+      const tb = parseShanghaiTsMs(b?.decision_ts) ?? 0;
+      return tb - ta;
+    });
+    historyRecords = sorted.slice(0, HISTORY_LIMIT);
 
     if (!historyRecords.length) {
       container.textContent = "(empty)";
-      $("chartsList").innerHTML = "";
       renderSummaryFromDb(normalizeSymbol($("symbol").value), historyRecords);
+      await renderIndividualChartsFromHistory(normalizeSymbol($("symbol").value), historyRecords);
       return;
     }
 
@@ -2379,42 +2596,76 @@ async function mapLimit(items, limit, fn) {
   return out;
 }
 
+function isBuySellRecordForSymbol(r, sym) {
+  const action = normalizeAction(r?.action);
+  if (action !== "BUY" && action !== "SELL") return false;
+  const rs = String(r?.symbol || "").trim();
+  return !sym || !rs || rs === sym;
+}
+
+function shanghaiRangeFromRecords(records, fallbackDays = 1) {
+  const rows = Array.isArray(records) ? records : [];
+  let minMs = Infinity;
+  let maxMs = -Infinity;
+
+  for (const r of rows) {
+    const t = parseShanghaiTsMs(r?.decision_ts);
+    if (!Number.isFinite(t)) continue;
+    if (t < minMs) minMs = t;
+    if (t > maxMs) maxMs = t;
+  }
+
+  if (!Number.isFinite(minMs) || !Number.isFinite(maxMs)) {
+    return shanghaiRecentDaysRangeHms(fallbackDays);
+  }
+
+  const minYmd = toShTsYmdHmsFromMs(minMs).slice(0, 10);
+  const maxYmd = toShTsYmdHmsFromMs(maxMs).slice(0, 10);
+  return {
+    start: `${minYmd} 00:00:00`,
+    end: `${maxYmd} 23:59:59`,
+  };
+}
+
+function stopHistorySnapshotAutoRefresh() {
+  if (historySnapshotTimer) {
+    clearInterval(historySnapshotTimer);
+    historySnapshotTimer = null;
+  }
+}
+
 async function renderIndividualChartsFromHistory(symbol, records) {
   const list = $("chartsList");
   if (!list) return;
 
   const sym = normalizeSymbol(symbol);
   const rows = Array.isArray(records) ? records : [];
-  if (!sym || rows.length === 0) {
+  if (!sym) {
     list.innerHTML = "";
+    stopHistorySnapshotAutoRefresh();
     wireAllChartFoldToggles(list);
     return;
   }
 
   // Clear existing chart card before appending a new one
-  list.innerHTML = ""; // Clear the previous chart card
+  list.innerHTML = "";
 
-  // pick latest N “signal decisions” that have BUY/SELL
-  const candidates = rows
-    .filter(r => String(r.symbol || sym) === sym)
-    .filter(r => ["BUY", "SELL"].includes(normalizeAction(r.action)))
-    .slice(0, 1); // Display only one chart card
+  // Build one consolidated chart with ALL BUY/SELL markers (or none if empty history)
+  const candidates = rows.filter(r => isBuySellRecordForSymbol(r, sym));
 
-  if (!candidates.length) {
-    list.innerHTML = `<div class="muted">No BUY/SELL records for chart markers.</div>`;
-    wireAllChartFoldToggles(list);
-    return;
-  }
+  const latestTs = candidates
+    .map(r => parseShanghaiTsMs(r.decision_ts))
+    .filter(t => Number.isFinite(t))
+    .sort((a, b) => b - a)[0];
+  const latestLabel = Number.isFinite(latestTs) ? toShTsYmdHmsFromMs(latestTs) : shanghaiNowYmdHms();
 
-  // skeleton UI first (kept folded by default)
-  list.innerHTML = candidates.map((r, idx) => `
-    <div class="chartCard folded" id="chartCard_${idx}">
+  list.innerHTML = `
+    <div class="chartCard snapshot folded" id="chartCard_0">
       <div class="chartTop">
-        <div class="title"><span class="chev">▾</span>Snapshot @ ${escapeHtml(String(r.decision_ts || "—"))}</div>
+        <div class="title"><span class="chev">▾</span><span class="badge">Snapshot</span>History Candles @ ${escapeHtml(String(latestLabel))}</div>
         <div class="meta">
           <span class="pill info"><code>${escapeHtml(sym)}</code></span>
-          ${actionPill(r.action)}
-          <span class="pill info">lots=${escapeHtml(String(r.suggested_lots ?? "—"))}</span>
+          <span class="pill info">markers=${escapeHtml(String(candidates.length))}</span>
           <span class="muted">freq=${escapeHtml(String($("marketMinPeriod").value || "1"))}</span>
           <span class="muted">•</span>
           <span class="chartTools">
@@ -2424,59 +2675,75 @@ async function renderIndividualChartsFromHistory(symbol, records) {
         </div>
       </div>
       <div class="chartWrap">
-        <canvas id="candle_${idx}" class="candle"></canvas>
+        <canvas id="candle_0" class="candle"></canvas>
         <div class="zoomBox"></div>
         <div class="markerTip"></div>
+        <div class="candleTip"></div>
       </div>
       <div class="chartHint muted">
         Loading bars from <code>/api/stock/bars</code>…
         <span class="hintZoom muted"></span>
       </div>
     </div>
-  `).join("");
+  `;
 
-  // Define `freq` here, which corresponds to the market's min period input value
   const freq = String($("marketMinPeriod").value || "1").trim() || "1";
+  const { start, end } = shanghaiSafeBarsRangeFromRecords(candidates);
 
-  // fetch and prepare data for drawing the chart
-  await mapLimit(candidates, 3, async (r, idx) => {
-    const tms = parseShanghaiTsMs(r.decision_ts);
-    if (tms == null) return;
+  const payload = await fetchBarsFromApi(sym, start, end, freq, null); // no limit
+  let currentOhlc = extractBarsFromBarsApiPayload(payload);
 
-    const { start, end } = shanghaiRecentDaysRangeHms(1);
+  let currentMarkers = candidates
+    .map(makeMarkerFromDbRecord)
+    .filter(Boolean)
+    .sort((a, b) => (a.t ?? 0) - (b.t ?? 0));
 
-    const payload = await fetchBarsFromApi(sym, start, end, freq, null); // no limit
-    const ohlc = extractBarsFromBarsApiPayload(payload);
+  const canvas = $("candle_0");
+  const card = document.getElementById("chartCard_0");
+  if (!canvas || !card) return;
 
-    const marker = makeMarkerFromDbRecord(r);
-    const markers = marker ? [marker] : [];
+  const redraw = (view = null) => drawCandlesOnCanvas(canvas, currentOhlc, currentMarkers, view);
 
-    const canvas = $(`candle_${idx}`);
-    const card = document.getElementById(`chartCard_${idx}`);
-    if (!canvas || !card) return;
+  // keep current zoom view on redraws
+  card.__redrawCandles = () => redraw(card.__zoomState?.view || null);
 
-    const hint = card.querySelector(".chartHint");
+  // wire zoom (works even when folded; active after unfold draw)
+  wireZoomForChart(
+    card,
+    canvas,
+    () => currentOhlc,
+    () => currentMarkers,
+    (view) => redraw(view)
+  );
 
-    const redraw = (view = null) => drawCandlesOnCanvas(canvas, ohlc, markers, view);
+  // If user already unfolded quickly, render now
+  if (!isChartFolded(card)) {
+    redraw(null);
+  }
 
-    // keep current zoom view on redraws
-    card.__redrawCandles = () => redraw(card.__zoomState?.view || null);
-
-    // wire zoom (works even when folded; active after unfold draw)
-    wireZoomForChart(
-      card,
-      canvas,
-      () => ohlc,
-      () => markers,
-      (view) => redraw(view)
-    );
-
-    // If user already unfolded quickly, render now
-    if (!isChartFolded(card)) {
-      redraw(null);
+  // Auto-refresh bars every minute (and include new markers on next history refresh)
+  stopHistorySnapshotAutoRefresh();
+  historySnapshotTimer = setInterval(async () => {
+    if (!card.isConnected) {
+      stopHistorySnapshotAutoRefresh();
+      return;
     }
-
-  });
+    if (!isShanghaiTradingTimeNow()) return;
+    try {
+      const nextCandidates = historyRecords.filter(r => isBuySellRecordForSymbol(r, sym));
+      const range = shanghaiSafeBarsRangeFromRecords(nextCandidates);
+      const nextPayload = await fetchBarsFromApi(sym, range.start, range.end, freq, null);
+      const nextOhlc = extractBarsFromBarsApiPayload(nextPayload);
+      const nextMarkers = nextCandidates
+        .map(makeMarkerFromDbRecord)
+        .filter(Boolean)
+        .sort((a, b) => (a.t ?? 0) - (b.t ?? 0));
+      currentOhlc = nextOhlc;
+      currentMarkers = nextMarkers;
+      card.__redrawCandles = () => redraw(card.__zoomState?.view || null);
+      card.__redrawCandles();
+    } catch {}
+  }, HISTORY_SNAPSHOT_REFRESH_MS);
 
   wireAllChartFoldToggles(list);
 }

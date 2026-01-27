@@ -23,14 +23,13 @@ from app.services.risk import RiskManager
 from app.services.broker import PaperBroker
 from app.services.strategy import StrategyEngine
 from app.services.trade_history_db import TradeHistoryDB
-
 from app.services.backtest import BacktestParams, run_backtest, build_report_html
 from app.services.stock_api import fetch_cn_minute_bars, bars_to_payload
-
 
 from app.models_llm import LLMChatRequest, LLMChatResponse, ChatMessage
 from app.models import TradingContextIn, AccountState
 
+from app.utils.textutils import normalize_cn_symbol
 
 # -------------------------
 # Lifespan (startup / shutdown)
@@ -124,22 +123,7 @@ STATIC_DIR = BASE_DIR / "static"
 
 if STATIC_DIR.exists() and STATIC_DIR.is_dir():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-
-
-def normalize_cn_symbol(symbol: str) -> str:
-    """
-    Normalize A-share symbol:
-    - keeps only 6-digit code like '600519', '000001', '301xxx'
-    - accepts formats like '600519.SH' -> '600519'
-    """
-    s = symbol.strip().upper()
-    if "." in s:
-        s = s.split(".", 1)[0]
-    if len(s) != 6 or not s.isdigit():
-        raise HTTPException(status_code=400, detail=f"Invalid A-share symbol: {symbol} (expect 6-digit code)")
-    return s
-
-
+ 
 # -------------------------
 # Basic endpoints
 # -------------------------
@@ -180,6 +164,15 @@ async def risk_status():
 # -------------------------
 # Trading routes (account-aware)
 # -------------------------
+@app.get("/signal-ui", response_class=HTMLResponse, tags=["ui"])
+async def signal_ui_page():
+    html_path = STATIC_DIR / "signal.html"
+    if not html_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="signal.html not found. Create /static/signal.html at repo root.",
+        )
+    return html_path.read_text(encoding="utf-8")
 
 @app.post("/signal/{symbol}", tags=["trading"])
 async def signal(symbol: str, ctx: TradingContextIn):
@@ -220,7 +213,10 @@ async def signal(symbol: str, ctx: TradingContextIn):
         logger.exception("signal_error | symbol=%s", symbol)
         raise HTTPException(status_code=500, detail=f"signal_error: {type(e).__name__}: {e}")
 
-
+@app.get("/ui/execute", response_class=HTMLResponse, tags=["ui"])
+async def ui_execute():
+    # serves app/static/execute.html
+    return HTMLResponse((STATIC_DIR / "execute.html").read_text(encoding="utf-8"))
 
 @app.post("/execute/{symbol}", tags=["trading"])
 async def execute(symbol: str, ctx: TradingContextIn):
@@ -262,20 +258,6 @@ async def execute(symbol: str, ctx: TradingContextIn):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"execute_error: {e}")
 
-@app.get("/signal-ui", response_class=HTMLResponse, tags=["ui"])
-async def signal_ui_page():
-    html_path = STATIC_DIR / "signal.html"
-    if not html_path.exists():
-        raise HTTPException(
-            status_code=404,
-            detail="signal.html not found. Create /static/signal.html at repo root.",
-        )
-    return html_path.read_text(encoding="utf-8")
-
-@app.get("/ui/execute", response_class=HTMLResponse, tags=["ui"])
-async def ui_execute():
-    # serves app/static/execute.html
-    return HTMLResponse((STATIC_DIR / "execute.html").read_text(encoding="utf-8"))
 
 @app.get("/trade_history/{symbol}", tags=["trading"])
 async def get_trade_history(
@@ -297,6 +279,8 @@ async def clear_trade_history(symbol: str):
     n = await trade_history_db.clear(code)
     return {"ok": True, "symbol": code, "deleted": n}
 
+
+# TODO: 增加隔日交易，隔周交易，和隔月交易的接口
 
 # -------------------------
 # Stock bars endpoint
