@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>xtrader - Admin Usage</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Fraunces:wght@400;600&display=swap" rel="stylesheet" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+    <style>
+      :root {
+        --bg: #f5f2eb;
+        --ink: #1a1a1a;
+        --muted: #5a5a5a;
+        --card: #ffffff;
+        --stroke: #e7dfd2;
+        --accent: #0f7f78;
+        --accent-2: #f4b25b;
+        --danger: #c33f3f;
+        --shadow: 0 24px 70px rgba(10, 12, 22, 0.12);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Space Grotesk", "Segoe UI", sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(1000px 600px at 0% 0%, #f9f1df 0%, transparent 55%),
+          radial-gradient(900px 500px at 100% 0%, #e6f1ef 0%, transparent 45%),
+          var(--bg);
+        min-height: 100vh;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 240px 1fr;
+        min-height: 100vh;
+      }
+      @media (max-width: 900px) {
+        .layout { grid-template-columns: 1fr; }
+        .sidebar { position: static; height: auto; }
+      }
+      .sidebar {
+        background: #111414;
+        color: #f4f1e8;
+        padding: 24px 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        position: sticky;
+        top: 0;
+        height: 100vh;
+      }
+      .brand {
+        font-family: "Fraunces", serif;
+        font-size: 20px;
+        letter-spacing: 0.5px;
+      }
+      .nav a {
+        display: block;
+        padding: 10px 12px;
+        border-radius: 10px;
+        color: #f4f1e8;
+        text-decoration: none;
+        margin-bottom: 6px;
+        background: rgba(255, 255, 255, 0.06);
+      }
+      .nav a.active {
+        background: #f4b25b;
+        color: #1a1a1a;
+        font-weight: 600;
+      }
+      .sidebar .actions {
+        margin-top: auto;
+        display: grid;
+        gap: 8px;
+      }
+      .sidebar button, .sidebar a.btn-link {
+        border: none;
+        border-radius: 10px;
+        padding: 10px 12px;
+        font-weight: 600;
+        cursor: pointer;
+        font-family: inherit;
+        text-align: center;
+      }
+      .btn-login {
+        background: #f4b25b;
+        color: #1a1a1a;
+        text-decoration: none;
+      }
+      .btn-logout {
+        background: #2a2f2f;
+        color: #f4f1e8;
+      }
+      header {
+        padding: 28px 28px 8px;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px 20px;
+      }
+      .pill {
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: #0f7f7814;
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .meta {
+        margin-left: auto;
+        font-size: 14px;
+        color: var(--muted);
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--stroke);
+        border-radius: 16px;
+        padding: 18px;
+        box-shadow: var(--shadow);
+        margin: 0 28px 40px;
+      }
+      .card h2 {
+        margin: 0 0 10px;
+        font-size: 18px;
+      }
+      .card p.sub {
+        margin: 0 0 16px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .row {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      label {
+        display: block;
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+      select {
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--stroke);
+        font-family: inherit;
+      }
+      button {
+        border: none;
+        border-radius: 10px;
+        padding: 10px 14px;
+        font-weight: 600;
+        cursor: pointer;
+        font-family: inherit;
+      }
+      .btn-outline {
+        background: transparent;
+        border: 1px solid var(--accent);
+        color: var(--accent);
+      }
+      .chart-wrap {
+        background: #faf8f3;
+        border-radius: 12px;
+        padding: 12px;
+        border: 1px dashed var(--stroke);
+      }
+      .split {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+      @media (max-width: 700px) {
+        .split { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="brand">Admin Console</div>
+        <nav class="nav">
+          <a href="/admin/users-ui">User Management</a>
+          <a class="active" href="/admin/usage-ui">API Usage BI</a>
+        </nav>
+        <div class="actions">
+          <a class="btn-link btn-login" id="login-link" href="/login">Log In</a>
+          <button class="btn-logout" id="logout-btn">Log Out</button>
+        </div>
+      </aside>
+
+      <main>
+        <header>
+          <div class="pill">superuser only</div>
+          <div class="meta" id="admin-meta">Checking session...</div>
+        </header>
+
+        <section class="card">
+          <h2>API Usage</h2>
+          <p class="sub">Daily traffic and top endpoints for the last <span id="days-label">14</span> days.</p>
+
+          <div class="row" style="margin-bottom: 12px;">
+            <div style="min-width: 120px;">
+              <label for="days-select">Range</label>
+              <select id="days-select">
+                <option value="7">7 days</option>
+                <option value="14" selected>14 days</option>
+                <option value="30">30 days</option>
+              </select>
+            </div>
+            <div style="align-self: flex-end;">
+              <button class="btn-outline" id="usage-refresh">Reload</button>
+            </div>
+          </div>
+
+          <div class="chart-wrap" style="margin-bottom: 12px;">
+            <canvas id="usage-line" height="140"></canvas>
+          </div>
+          <div class="split">
+            <div class="chart-wrap">
+              <canvas id="usage-paths" height="160"></canvas>
+            </div>
+            <div class="chart-wrap">
+              <canvas id="usage-users" height="160"></canvas>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      const adminMeta = document.getElementById("admin-meta");
+      const loginLink = document.getElementById("login-link");
+      const logoutBtn = document.getElementById("logout-btn");
+      const daysSelect = document.getElementById("days-select");
+      const daysLabel = document.getElementById("days-label");
+      const usageRefresh = document.getElementById("usage-refresh");
+
+      let lineChart = null;
+      let pathsChart = null;
+      let usersChart = null;
+
+      async function loadUsage() {
+        const days = Number(daysSelect.value);
+        daysLabel.textContent = days;
+        const res = await fetch(`/admin/api-usage?days=${days}`, { credentials: "same-origin" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          console.warn(data.detail || "Usage load failed");
+          return;
+        }
+        renderUsageCharts(data);
+      }
+
+      function renderUsageCharts(data) {
+        const labels = data.series.map((d) => d.date);
+        const counts = data.series.map((d) => d.count);
+        if (lineChart) lineChart.destroy();
+        lineChart = new Chart(document.getElementById("usage-line"), {
+          type: "line",
+          data: {
+            labels,
+            datasets: [{
+              label: "Requests",
+              data: counts,
+              borderColor: "#0f7f78",
+              backgroundColor: "rgba(15, 127, 120, 0.15)",
+              fill: true,
+              tension: 0.3,
+            }],
+          },
+          options: { responsive: true, plugins: { legend: { display: false } } },
+        });
+
+        if (pathsChart) pathsChart.destroy();
+        pathsChart = new Chart(document.getElementById("usage-paths"), {
+          type: "bar",
+          data: {
+            labels: data.top_paths.map((d) => d.path),
+            datasets: [{
+              label: "Top endpoints",
+              data: data.top_paths.map((d) => d.count),
+              backgroundColor: "#f4b25b",
+            }],
+          },
+          options: {
+            responsive: true,
+            plugins: { legend: { display: false } },
+            scales: { x: { ticks: { maxRotation: 40, minRotation: 20 } } },
+          },
+        });
+
+        if (usersChart) usersChart.destroy();
+        usersChart = new Chart(document.getElementById("usage-users"), {
+          type: "bar",
+          data: {
+            labels: data.top_users.map((d) => d.username),
+            datasets: [{
+              label: "Top users",
+              data: data.top_users.map((d) => d.count),
+              backgroundColor: "#0f7f78",
+            }],
+          },
+          options: { responsive: true, plugins: { legend: { display: false } } },
+        });
+      }
+
+      async function logout() {
+        await fetch("/auth/logout", { method: "POST", credentials: "same-origin" });
+        window.location.href = "/login";
+      }
+
+      async function loadSession() {
+        const res = await fetch("/auth/me", { credentials: "same-origin" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          adminMeta.textContent = "Not authenticated.";
+          loginLink.style.display = "block";
+          logoutBtn.style.display = "none";
+          return;
+        }
+        const username = data.user?.username || "unknown";
+        adminMeta.textContent = `Signed in as ${username}`;
+        loginLink.textContent = username;
+        loginLink.href = "/admin/usage-ui";
+        loginLink.style.display = "block";
+        logoutBtn.style.display = "block";
+      }
+
+      daysSelect.addEventListener("change", loadUsage);
+      usageRefresh.addEventListener("click", loadUsage);
+      logoutBtn.addEventListener("click", logout);
+
+      logoutBtn.style.display = "none";
+      loadSession();
+      loadUsage();
+    </script>
+  </body>
+</html>

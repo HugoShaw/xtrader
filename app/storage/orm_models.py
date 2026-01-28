@@ -86,3 +86,18 @@ Index(
     IntradayTradeORM.trading_day_sh,
     IntradayTradeORM.decision_ts,
 )
+
+
+class ApiUsageORM(Base):
+    __tablename__ = "api_usage"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    path: Mapped[str] = mapped_column(String(128), index=True)
+    method: Mapped[str] = mapped_column(String(8))
+    status_code: Mapped[int] = mapped_column(Integer)
+    username: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    duration_ms: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+Index("ix_api_usage_day_path", ApiUsageORM.created_at, ApiUsageORM.path)

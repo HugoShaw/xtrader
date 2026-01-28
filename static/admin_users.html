@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>xtrader - Admin Users</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Fraunces:wght@400;600&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --bg: #f5f2eb;
+        --ink: #1a1a1a;
+        --muted: #5a5a5a;
+        --card: #ffffff;
+        --stroke: #e7dfd2;
+        --accent: #0f7f78;
+        --accent-2: #f4b25b;
+        --danger: #c33f3f;
+        --shadow: 0 24px 70px rgba(10, 12, 22, 0.12);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Space Grotesk", "Segoe UI", sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(1000px 600px at 0% 0%, #f9f1df 0%, transparent 55%),
+          radial-gradient(900px 500px at 100% 0%, #e6f1ef 0%, transparent 45%),
+          var(--bg);
+        min-height: 100vh;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 240px 1fr;
+        min-height: 100vh;
+      }
+      @media (max-width: 900px) {
+        .layout { grid-template-columns: 1fr; }
+        .sidebar { position: static; height: auto; }
+      }
+      .sidebar {
+        background: #111414;
+        color: #f4f1e8;
+        padding: 24px 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        position: sticky;
+        top: 0;
+        height: 100vh;
+      }
+      .brand {
+        font-family: "Fraunces", serif;
+        font-size: 20px;
+        letter-spacing: 0.5px;
+      }
+      .nav a {
+        display: block;
+        padding: 10px 12px;
+        border-radius: 10px;
+        color: #f4f1e8;
+        text-decoration: none;
+        margin-bottom: 6px;
+        background: rgba(255, 255, 255, 0.06);
+      }
+      .nav a.active {
+        background: #f4b25b;
+        color: #1a1a1a;
+        font-weight: 600;
+      }
+      .sidebar .actions {
+        margin-top: auto;
+        display: grid;
+        gap: 8px;
+      }
+      .sidebar button, .sidebar a.btn-link {
+        border: none;
+        border-radius: 10px;
+        padding: 10px 12px;
+        font-weight: 600;
+        cursor: pointer;
+        font-family: inherit;
+        text-align: center;
+      }
+      .btn-login {
+        background: #f4b25b;
+        color: #1a1a1a;
+        text-decoration: none;
+      }
+      .btn-logout {
+        background: #2a2f2f;
+        color: #f4f1e8;
+      }
+      header {
+        padding: 28px 28px 8px;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px 20px;
+      }
+      .pill {
+        padding: 6px 10px;
+        border-radius: 999px;
+        background: #0f7f7814;
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .meta {
+        margin-left: auto;
+        font-size: 14px;
+        color: var(--muted);
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--stroke);
+        border-radius: 16px;
+        padding: 18px;
+        box-shadow: var(--shadow);
+        margin: 0 28px 40px;
+      }
+      .card h2 {
+        margin: 0 0 10px;
+        font-size: 18px;
+      }
+      .card p.sub {
+        margin: 0 0 16px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+      .row {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      label {
+        display: block;
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+      input {
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--stroke);
+        font-family: inherit;
+      }
+      input:focus {
+        outline: 2px solid #0f7f7826;
+        border-color: var(--accent);
+      }
+      button {
+        border: none;
+        border-radius: 10px;
+        padding: 10px 14px;
+        font-weight: 600;
+        cursor: pointer;
+        font-family: inherit;
+      }
+      .btn {
+        background: var(--accent);
+        color: white;
+      }
+      .btn-outline {
+        background: transparent;
+        border: 1px solid var(--accent);
+        color: var(--accent);
+      }
+      .btn-danger {
+        background: #f8d4d4;
+        color: var(--danger);
+      }
+      .table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      .table th, .table td {
+        padding: 10px 8px;
+        border-bottom: 1px solid var(--stroke);
+        text-align: left;
+      }
+      .table th {
+        color: var(--muted);
+        font-weight: 600;
+      }
+      .tag {
+        display: inline-block;
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: #f2efe8;
+        font-size: 12px;
+      }
+      .message {
+        margin-top: 10px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .message.error { color: var(--danger); }
+      .message.ok { color: var(--accent); }
+    </style>
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="brand">Admin Console</div>
+        <nav class="nav">
+          <a class="active" href="/admin/users-ui">User Management</a>
+          <a href="/admin/usage-ui">API Usage BI</a>
+        </nav>
+        <div class="actions">
+          <a class="btn-link btn-login" id="login-link" href="/login">Log In</a>
+          <button class="btn-logout" id="logout-btn">Log Out</button>
+        </div>
+      </aside>
+
+      <main>
+        <header>
+          <div class="pill">superuser only</div>
+          <div class="meta" id="admin-meta">Checking session...</div>
+        </header>
+
+        <section class="card">
+          <h2>User Management</h2>
+          <p class="sub">Review, create, edit, and remove users.</p>
+
+          <div class="row" style="margin-bottom: 12px;">
+            <div style="flex: 1; min-width: 200px;">
+              <label for="search">Search username</label>
+              <input id="search" placeholder="e.g. alice" />
+            </div>
+            <div style="align-self: flex-end;">
+              <button class="btn-outline" id="refresh-btn">Refresh</button>
+            </div>
+          </div>
+
+          <div class="row" style="margin-bottom: 16px;">
+            <div style="flex: 1; min-width: 180px;">
+              <label for="edit-username">Username</label>
+              <input id="edit-username" placeholder="letters, digits, underscore" />
+            </div>
+            <div style="flex: 1; min-width: 180px;">
+              <label for="edit-password">Password</label>
+              <input id="edit-password" type="password" placeholder="min 8 chars" />
+            </div>
+            <div style="align-self: flex-end; display: flex; gap: 8px; flex-wrap: wrap;">
+              <button class="btn" id="create-btn">Create</button>
+              <button class="btn-outline" id="update-btn">Update</button>
+              <button class="btn-outline" id="clear-btn">Clear</button>
+            </div>
+          </div>
+
+          <div class="message" id="user-msg"></div>
+
+          <div style="margin-top: 12px;">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Username</th>
+                  <th>Created</th>
+                  <th>Last Login</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="user-table"></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      const userTable = document.getElementById("user-table");
+      const userMsg = document.getElementById("user-msg");
+      const searchInput = document.getElementById("search");
+      const editUsername = document.getElementById("edit-username");
+      const editPassword = document.getElementById("edit-password");
+      const createBtn = document.getElementById("create-btn");
+      const updateBtn = document.getElementById("update-btn");
+      const clearBtn = document.getElementById("clear-btn");
+      const refreshBtn = document.getElementById("refresh-btn");
+      const adminMeta = document.getElementById("admin-meta");
+      const loginLink = document.getElementById("login-link");
+      const logoutBtn = document.getElementById("logout-btn");
+
+      let selectedUserId = null;
+
+      function setUserMsg(text, kind) {
+        userMsg.textContent = text || "";
+        userMsg.className = `message ${kind || ""}`;
+      }
+
+      function clearEditor() {
+        selectedUserId = null;
+        editUsername.value = "";
+        editPassword.value = "";
+        setUserMsg("", "");
+      }
+
+      function renderUsers(items) {
+        userTable.innerHTML = "";
+        items.forEach((u) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td><span class="tag">#${u.id}</span></td>
+            <td>${u.username}</td>
+            <td>${u.created_at || "-"}</td>
+            <td>${u.last_login_at || "-"}</td>
+            <td>
+              <button class="btn-outline" data-action="edit" data-id="${u.id}">Edit</button>
+              <button class="btn-danger" data-action="delete" data-id="${u.id}">Delete</button>
+            </td>
+          `;
+          userTable.appendChild(tr);
+        });
+      }
+
+      async function loadUsers() {
+        const q = searchInput.value.trim();
+        const qs = q ? `?q=${encodeURIComponent(q)}&limit=200` : "?limit=200";
+        const res = await fetch(`/admin/users${qs}`, { credentials: "same-origin" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setUserMsg(data.detail || "Failed to load users.", "error");
+          return;
+        }
+        renderUsers(data.items || []);
+        setUserMsg(`Loaded ${data.items?.length || 0} users.`, "ok");
+      }
+
+      async function createUser() {
+        const username = editUsername.value.trim();
+        const password = editPassword.value;
+        if (!username || password.length < 8) {
+          setUserMsg("Username and password (>= 8 chars) required.", "error");
+          return;
+        }
+        const res = await fetch("/admin/users", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({ username, password }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setUserMsg(data.detail || "Create failed.", "error");
+          return;
+        }
+        setUserMsg(`Created ${data.username}.`, "ok");
+        clearEditor();
+        loadUsers();
+      }
+
+      async function updateUser() {
+        if (!selectedUserId) {
+          setUserMsg("Select a user to update.", "error");
+          return;
+        }
+        const payload = {};
+        if (editUsername.value.trim()) payload.username = editUsername.value.trim();
+        if (editPassword.value) payload.password = editPassword.value;
+        if (!payload.username && !payload.password) {
+          setUserMsg("Provide a new username or password.", "error");
+          return;
+        }
+        const res = await fetch(`/admin/users/${selectedUserId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setUserMsg(data.detail || "Update failed.", "error");
+          return;
+        }
+        setUserMsg(`Updated ${data.username}.`, "ok");
+        clearEditor();
+        loadUsers();
+      }
+
+      async function deleteUser(userId) {
+        if (!confirm("Delete this user?")) return;
+        const res = await fetch(`/admin/users/${userId}`, {
+          method: "DELETE",
+          credentials: "same-origin",
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setUserMsg(data.detail || "Delete failed.", "error");
+          return;
+        }
+        setUserMsg("User deleted.", "ok");
+        loadUsers();
+      }
+
+      async function logout() {
+        await fetch("/auth/logout", { method: "POST", credentials: "same-origin" });
+        window.location.href = "/login";
+      }
+
+      userTable.addEventListener("click", (e) => {
+        const btn = e.target.closest("button");
+        if (!btn) return;
+        const id = Number(btn.dataset.id);
+        const action = btn.dataset.action;
+        if (action === "edit") {
+          selectedUserId = id;
+          const row = btn.closest("tr");
+          editUsername.value = row.children[1].textContent.trim();
+          editPassword.value = "";
+          setUserMsg(`Editing user #${id}`, "ok");
+        } else if (action === "delete") {
+          deleteUser(id);
+        }
+      });
+
+      createBtn.addEventListener("click", createUser);
+      updateBtn.addEventListener("click", updateUser);
+      clearBtn.addEventListener("click", clearEditor);
+      refreshBtn.addEventListener("click", loadUsers);
+      searchInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") loadUsers();
+      });
+      logoutBtn.addEventListener("click", logout);
+
+      async function loadSession() {
+        const res = await fetch("/auth/me", { credentials: "same-origin" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          adminMeta.textContent = "Not authenticated.";
+          loginLink.style.display = "block";
+          logoutBtn.style.display = "none";
+          return;
+        }
+        const username = data.user?.username || "unknown";
+        adminMeta.textContent = `Signed in as ${username}`;
+        loginLink.textContent = username;
+        loginLink.href = "/admin/users-ui";
+        loginLink.style.display = "block";
+        logoutBtn.style.display = "block";
+      }
+
+      logoutBtn.style.display = "none";
+      loadSession();
+      loadUsers();
+    </script>
+  </body>
+</html>

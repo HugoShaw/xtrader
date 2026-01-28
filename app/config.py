@@ -58,4 +58,7 @@ class Settings(BaseSettings):
     auth_session_ttl_seconds: int = Field(default=60 * 60 * 12, alias="AUTH_SESSION_TTL_SECONDS")
     auth_cookie_name: str = Field(default="xtrader_session", alias="AUTH_COOKIE_NAME")
 
+    # Admin (comma-separated usernames)
+    admin_usernames: str = Field(default="admin", alias="ADMIN_USERNAMES")
+
 settings = Settings()

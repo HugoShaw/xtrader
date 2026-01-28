@@ -133,6 +133,9 @@ TIMEZONE_NAME=Asia/Shanghai
 AUTH_SECRET_KEY=change-this-in-prod
 AUTH_SESSION_TTL_SECONDS=43200
 AUTH_COOKIE_NAME=xtrader_session
+
+# Admin (comma-separated usernames)
+ADMIN_USERNAMES=admin
 ```
 
 ---
@@ -155,6 +158,10 @@ Behavior:
 - On successful login, the backend sets an HTTP-only cookie.
 - Protected routes require that cookie (no explicit `user` query/body param is needed).
 - The `execute.html` page includes a quick-login modal and automatically checks `/auth/me`.
+
+Admin:
+- The management system is available at `GET /admin` (superuser only).
+- Superuser usernames are defined by `ADMIN_USERNAMES` (comma-separated).
 
 ---
 
@@ -181,6 +188,14 @@ Protected (requires login cookie):
 - `GET /backtest`
 - `POST /api/backtest/run`
 - `POST /api/backtest/report`
+
+Admin (superuser only):
+- `GET /admin`
+- `GET /admin/users`
+- `POST /admin/users`
+- `PATCH /admin/users/{user_id}`
+- `DELETE /admin/users/{user_id}`
+- `GET /admin/api-usage`
 
 Swagger UI is available at `/docs` after you start the server.
 

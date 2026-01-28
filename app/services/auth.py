@@ -87,6 +87,14 @@ def _decode_session(token: str) -> Optional[dict]:
     return payload
 
 
+def get_session_username(token: str) -> Optional[str]:
+    payload = _decode_session(token)
+    if not payload:
+        return None
+    username = str(payload.get("u") or "").strip()
+    return username or None
+
+
 def set_session_cookie(response: Response, token: str) -> None:
     response.set_cookie(
         key=settings.auth_cookie_name,
@@ -186,6 +194,11 @@ class AuthService:
             )
 
 
+def is_superuser(user: AuthenticatedUser) -> bool:
+    raw = settings.admin_usernames or ""
+    admins = {u.strip() for u in raw.split(",") if u.strip()}
+    return user.username in admins
+
+
 def get_auth_service(request: Request) -> AuthService:
     return AuthService(request)
-

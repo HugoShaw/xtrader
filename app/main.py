@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -15,7 +16,7 @@ from app.logging_config import logger
 
 from app.services.cache import build_cache
 
-from app.storage.db import make_engine, make_session_factory, init_db
+from app.storage.db import make_engine, make_session_factory, init_db, session_scope
 
 from app.services.market_data import build_market_provider
 from app.services.llm_client import OpenAICompatLLM
@@ -30,11 +31,17 @@ from app.services.auth import (
     clear_session_cookie,
     get_auth_service,
     set_session_cookie,
+    get_session_username,
+    hash_password,
+    is_superuser,
 )
 
 from app.models_llm import LLMChatRequest, LLMChatResponse, ChatMessage
 from app.models import TradingContextIn, AccountState
-from app.models_auth import AuthStatus, LoginRequest, SignupRequest
+from app.models_auth import AuthStatus, LoginRequest, SignupRequest, UserPublic
+from app.models_admin import AdminUserCreate, AdminUserUpdate, AdminUserList, ApiUsageSummary
+from app.storage.auth_repo import UserRepo
+from app.storage.usage_repo import ApiUsageRepo
 
 from app.utils.textutils import normalize_cn_symbol
 
@@ -43,6 +50,19 @@ from app.utils.textutils import normalize_cn_symbol
 # -------------------------
 async def require_user(auth=Depends(get_auth_service)) -> AuthenticatedUser:
     return await auth.current_user()
+
+async def require_superuser(user: AuthenticatedUser = Depends(require_user)) -> AuthenticatedUser:
+    if not is_superuser(user):
+        raise HTTPException(status_code=403, detail="superuser required")
+    return user
+
+def _to_user_public(user) -> UserPublic:
+    return UserPublic(
+        id=int(user.id),
+        username=str(user.username),
+        created_at=user.created_at.isoformat() if user.created_at else None,
+        last_login_at=user.last_login_at.isoformat() if user.last_login_at else None,
+    )
 
 # -------------------------
 # Lifespan (startup / shutdown)
@@ -136,7 +156,38 @@ STATIC_DIR = BASE_DIR / "static"
 
 if STATIC_DIR.exists() and STATIC_DIR.is_dir():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
- 
+
+# -------------------------
+# API usage tracking
+# -------------------------
+@app.middleware("http")
+async def api_usage_middleware(request: Request, call_next):
+    start = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = (time.perf_counter() - start) * 1000.0
+
+    path = request.url.path
+    if path.startswith("/static") or path == "/favicon.ico":
+        return response
+
+    try:
+        session_factory = request.app.state.session_factory
+        token = request.cookies.get(settings.auth_cookie_name)
+        username = get_session_username(token) if token else None
+        async with session_scope(session_factory) as s:
+            repo = ApiUsageRepo(s)
+            await repo.add(
+                path=path,
+                method=request.method,
+                status_code=response.status_code,
+                username=username,
+                duration_ms=duration_ms,
+            )
+    except Exception:
+        logger.exception("api_usage_log_error | path=%s", path)
+
+    return response
+
 # -------------------------
 # Basic endpoints
 # -------------------------
@@ -198,6 +249,122 @@ async def auth_logout(response: Response):
 @app.get("/auth/me", response_model=AuthStatus, tags=["auth"])
 async def auth_me(user: AuthenticatedUser = Depends(require_user)):
     return AuthStatus(ok=True, user=user.to_public())
+
+
+# -------------------------
+# Admin UI + APIs (superuser only)
+# -------------------------
+@app.get("/admin", response_class=HTMLResponse, tags=["admin-ui"])
+async def admin_page(user: AuthenticatedUser = Depends(require_superuser)):
+    html_path = STATIC_DIR / "admin_users.html"
+    if not html_path.exists():
+        raise HTTPException(status_code=404, detail="admin_users.html not found in /static")
+    return html_path.read_text(encoding="utf-8")
+
+
+@app.get("/admin/users-ui", response_class=HTMLResponse, tags=["admin-ui"])
+async def admin_users_page(user: AuthenticatedUser = Depends(require_superuser)):
+    html_path = STATIC_DIR / "admin_users.html"
+    if not html_path.exists():
+        raise HTTPException(status_code=404, detail="admin_users.html not found in /static")
+    return html_path.read_text(encoding="utf-8")
+
+
+@app.get("/admin/usage-ui", response_class=HTMLResponse, tags=["admin-ui"])
+async def admin_usage_page(user: AuthenticatedUser = Depends(require_superuser)):
+    html_path = STATIC_DIR / "admin_usage.html"
+    if not html_path.exists():
+        raise HTTPException(status_code=404, detail="admin_usage.html not found in /static")
+    return html_path.read_text(encoding="utf-8")
+
+
+@app.get("/admin/users", response_model=AdminUserList, tags=["admin"])
+async def admin_list_users(
+    q: Optional[str] = Query(None, description="Search by username"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: AuthenticatedUser = Depends(require_superuser),
+):
+    async with session_scope(app.state.session_factory) as s:
+        repo = UserRepo(s)
+        items = await repo.list_users(limit=limit, offset=offset, search=q)
+        total = await repo.count_users(search=q)
+        return AdminUserList(
+            items=[_to_user_public(u) for u in items],
+            total=total,
+            limit=limit,
+            offset=offset,
+        )
+
+
+@app.post("/admin/users", response_model=UserPublic, tags=["admin"])
+async def admin_create_user(
+    req: AdminUserCreate,
+    user: AuthenticatedUser = Depends(require_superuser),
+):
+    pwd_hash, salt = hash_password(req.password)
+    async with session_scope(app.state.session_factory) as s:
+        repo = UserRepo(s)
+        existing = await repo.get_by_username(req.username)
+        if existing:
+            raise HTTPException(status_code=409, detail="username already exists")
+        new_user = await repo.create_user(username=req.username, password_hash=pwd_hash, salt=salt)
+        return _to_user_public(new_user)
+
+
+@app.patch("/admin/users/{user_id}", response_model=UserPublic, tags=["admin"])
+async def admin_update_user(
+    user_id: int,
+    req: AdminUserUpdate,
+    user: AuthenticatedUser = Depends(require_superuser),
+):
+    async with session_scope(app.state.session_factory) as s:
+        repo = UserRepo(s)
+        target = await repo.get_by_id(user_id)
+        if not target:
+            raise HTTPException(status_code=404, detail="user not found")
+
+        if req.username and req.username != target.username:
+            existing = await repo.get_by_username(req.username)
+            if existing:
+                raise HTTPException(status_code=409, detail="username already exists")
+            target.username = req.username
+
+        if req.password:
+            pwd_hash, salt = hash_password(req.password)
+            target.password_hash = pwd_hash
+            target.salt = salt
+
+        s.add(target)
+        return _to_user_public(target)
+
+
+@app.delete("/admin/users/{user_id}", tags=["admin"])
+async def admin_delete_user(
+    user_id: int,
+    user: AuthenticatedUser = Depends(require_superuser),
+):
+    if int(user_id) == int(user.id):
+        raise HTTPException(status_code=400, detail="cannot delete the current superuser")
+    async with session_scope(app.state.session_factory) as s:
+        repo = UserRepo(s)
+        deleted = await repo.delete_user(user_id)
+        if deleted <= 0:
+            raise HTTPException(status_code=404, detail="user not found")
+        return {"ok": True, "deleted": deleted}
+
+
+@app.get("/admin/api-usage", response_model=ApiUsageSummary, tags=["admin"])
+async def admin_api_usage(
+    days: int = Query(7, ge=1, le=90),
+    user: AuthenticatedUser = Depends(require_superuser),
+):
+    async with session_scope(app.state.session_factory) as s:
+        repo = ApiUsageRepo(s)
+        series = await repo.list_daily_counts(days=days)
+        top_paths = await repo.top_paths(days=days, limit=8)
+        top_users = await repo.top_users(days=days, limit=8)
+        return ApiUsageSummary(days=days, series=series, top_paths=top_paths, top_users=top_users)
 
 
 @app.get("/risk", tags=["trading"])
