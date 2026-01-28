@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>xtrader - Execute UI</title>
   <style>
-    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    :root { font-family: "Trebuchet MS", "Segoe UI", Tahoma, sans-serif; }
     body { margin: 0; background: #0b0f19; color: #e8eefc; }
     header { padding: 18px 20px; border-bottom: 1px solid rgba(255,255,255,.08); display: grid; gap: 6px; }
     header h1 { margin: 0; font-size: 18px; font-weight: 650; }
@@ -23,6 +23,63 @@
     .card { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); border-radius: 14px; overflow: hidden; }
     .card h2 { margin: 0; padding: 14px 14px 10px; font-size: 14px; font-weight: 650; border-bottom: 1px solid rgba(255,255,255,.08); }
     .card .content { padding: 14px; display: grid; gap: 12px; }
+
+    /* --- Request settings beautify --- */
+    .settingsCard {
+      position: relative;
+      background:
+        radial-gradient(800px 300px at 10% -20%, rgba(110,168,254,.18), transparent 60%),
+        linear-gradient(180deg, rgba(10,14,24,.95), rgba(6,9,16,.98));
+      border-color: rgba(110,168,254,.25);
+      box-shadow: 0 20px 60px rgba(0,0,0,.45);
+    }
+    .settingsCard::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: linear-gradient(180deg, rgba(255,255,255,.06), transparent 40%);
+    }
+    .settingsCard .content { gap: 14px; }
+    .settingsCard .sectionTitle {
+      margin-top: 6px;
+      font-size: 11px;
+      letter-spacing: .6px;
+      text-transform: uppercase;
+      color: rgba(232,238,252,.75);
+    }
+    .settingsCard label {
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,.10);
+      background: rgba(6,9,16,.55);
+      display: grid;
+      gap: 8px;
+      transition: border-color .2s ease, box-shadow .2s ease, background .2s ease;
+    }
+    .settingsCard label:focus-within {
+      border-color: rgba(110,168,254,.6);
+      box-shadow: 0 0 0 2px rgba(110,168,254,.12);
+      background: rgba(8,12,20,.75);
+    }
+    .settingsCard .labelText { font-size: 12px; opacity: .9; }
+    .settingsCard .fieldHint { font-size: 11px; opacity: .7; }
+    .settingsCard input,
+    .settingsCard select,
+    .settingsCard textarea {
+      background: rgba(6,9,18,.7);
+      border: 1px solid rgba(255,255,255,.12);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+    }
+    .settingsCard input[type="datetime-local"] {
+      color-scheme: dark;
+    }
+    .settingsCard .modeRow {
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px dashed rgba(255,255,255,.14);
+      background: rgba(0,0,0,.18);
+    }
 
     label { display: grid; gap: 6px; font-size: 12px; opacity: .9; }
     input, select, textarea {
@@ -184,6 +241,8 @@
       line-height: 1;
     }
     .modalHint { font-size: 12px; opacity: .8; }
+    .modalHint a { color: #8fb6ff; text-decoration: none; }
+    .modalHint a:hover { text-decoration: underline; }
     .modalMsg {
       font-size: 13px;
       padding: 8px 10px;
@@ -449,6 +508,7 @@
       <button id="loginClose" class="iconBtn" type="button" aria-label="Close">✕</button>
     </div>
     <div class="modalHint">Log in to access protected routes.</div>
+    <div class="modalHint">Go to the <a id="loginPageLink" href="/login">login page</a> for full access.</div>
     <div id="loginMsg" class="modalMsg" role="status" aria-live="polite"></div>
     <label>
       Username
@@ -468,9 +528,10 @@
 <div class="wrap">
   <div class="grid">
     <!-- Left: Inputs -->
-    <div class="card">
+    <div class="card settingsCard">
       <h2>Request Settings</h2>
       <div class="content">
+        <div class="sectionTitle">Core Inputs</div>
         <label>
           Stock Symbol (6 digits)
           <input id="symbol" placeholder="e.g. 600519" />
@@ -509,7 +570,8 @@
         <div class="row">
           <label>
             now_ts (optional)
-            <input id="nowTs" placeholder='Optional: "YYYY-MM-DD HH:MM:SS" (Asia/Shanghai). Leave blank to let backend use server Shanghai time.' />
+            <input id="nowTs" type="datetime-local" step="1" />
+            <span class="fieldHint">Calendar input; interpreted as Asia/Shanghai when sent.</span>
           </label>
           <label>
             Frequency (seconds)
@@ -517,7 +579,7 @@
           </label>
         </div>
 
-        <h2 style="margin:0; padding: 6px 0 0; border: none;">Options Overrides (optional)</h2>
+        <div class="sectionTitle">Options Overrides (optional)</div>
 
         <div class="row">
           <label>
@@ -557,7 +619,7 @@
           </label>
         </div>
 
-        <h2 style="margin:0; padding: 6px 0 0; border: none;">Market Options (matches backend MarketOptionsIn)</h2>
+        <div class="sectionTitle">Market Options (matches backend MarketOptionsIn)</div>
 
         <div class="row">
           <label>
@@ -757,6 +819,16 @@
 
       const get = (type) => parts.find(p => p.type === type)?.value ?? "";
       return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")}`;
+    }
+    return s;
+  }
+
+  function normalizeNowTsForUi(input) {
+    const s = String(input || "").trim();
+    if (!s) return "";
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(s)) return s;
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) {
+      return s.replace(" ", "T");
     }
     return s;
   }
@@ -1220,7 +1292,7 @@ function drawTopLegend(ctx, items, padL, padT, cssW, padR) {
       $("pos").value = d.pos ?? "";
       $("avgCost").value = d.avgCost ?? "";
       $("upl").value = d.upl ?? "";
-      $("nowTs").value = d.nowTs ?? "";
+      $("nowTs").value = normalizeNowTsForUi(d.nowTs ?? "");
       $("freqSec").value = d.freqSec ?? "";
 
       $("tzName").value = d.tzName ?? "";
@@ -2557,7 +2629,7 @@ function bindCandleHover(canvas) {
   let lastHistoryRows = [];
   const HISTORY_VISIBLE_LIMIT = 10;
   let historyExpanded = false;
-  const HISTORY_SNAPSHOT_REFRESH_MS = 60_000;
+  const HISTORY_SNAPSHOT_REFRESH_MS = 5 * 60_000;
   let historySnapshotTimer = null;
 
   function shanghaiNowParts() {
@@ -2911,7 +2983,7 @@ async function renderIndividualChartsFromHistory(symbol, records) {
     redraw(null);
   }
 
-  // Auto-refresh bars every minute (and include new markers on next history refresh)
+  // Auto-refresh bars every 5 minutes (and include new markers on next history refresh)
   stopHistorySnapshotAutoRefresh();
   historySnapshotTimer = setInterval(async () => {
     if (!card.isConnected) {
@@ -3143,6 +3215,7 @@ async function renderIndividualChartsFromHistory(symbol, records) {
   const loginMsg = $("loginMsg");
   const loginUsername = $("loginUsername");
   const loginPassword = $("loginPassword");
+  const loginPageLink = $("loginPageLink");
 
   function setAuthMessage(text, kind) {
     if (!loginMsg) return;
@@ -3158,6 +3231,10 @@ async function renderIndividualChartsFromHistory(symbol, records) {
 
   function openLoginModal() {
     clearAuthMessage();
+    if (loginPageLink) {
+      const next = encodeURIComponent(window.location.pathname + window.location.search);
+      loginPageLink.href = `/login?next=${next}`;
+    }
     loginModal?.classList.add("open");
     setTimeout(() => loginUsername?.focus(), 0);
   }

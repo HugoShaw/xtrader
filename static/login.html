@@ -135,7 +135,7 @@
       </div>
 
       <div class="row" style="margin-top:8px">
-        Try after login: <code>/auth/me</code> or <code>/signal-ui</code>
+        Try after login: <code>/auth/me</code> or <code>/</code>
       </div>
     </main>
 
@@ -190,7 +190,9 @@
 
           showMessage("Logged in. Redirecting...", "ok");
           setTimeout(() => {
-            window.location.href = "/signal-ui";
+            const params = new URLSearchParams(window.location.search);
+            const next = params.get("next") || "/";
+            window.location.href = next;
           }, 500);
         } catch (err) {
           showMessage(`Network error: ${err}`, "error");
@@ -202,4 +204,3 @@
     </script>
   </body>
 </html>
-

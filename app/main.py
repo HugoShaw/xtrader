@@ -142,20 +142,10 @@ if STATIC_DIR.exists() and STATIC_DIR.is_dir():
 # -------------------------
 @app.get("/", response_class=HTMLResponse)
 async def home():
-    return HTMLResponse(
-        """
-        <html>
-          <head><title>xtrader</title></head>
-          <body>
-            <h3>xtrader backend is running</h3>
-            <ul>
-              <li>POST /signal/{symbol}</li>
-              <li>POST /execute/{symbol}</li>
-            </ul>
-          </body>
-        </html>
-        """
-    )
+    html_path = STATIC_DIR / "home.html"
+    if not html_path.exists():
+        raise HTTPException(status_code=404, detail="home.html not found in /static")
+    return HTMLResponse(html_path.read_text(encoding="utf-8"))
 
 @app.get("/health", tags=["system"])
 async def health():
@@ -282,9 +272,14 @@ async def signal(
         raise HTTPException(status_code=500, detail=f"signal_error: {type(e).__name__}: {e}")
 
 @app.get("/ui/execute", response_class=HTMLResponse, tags=["ui"])
-async def ui_execute(user: AuthenticatedUser = Depends(require_user)):
-    # serves app/static/execute.html
-    return HTMLResponse((STATIC_DIR / "execute.html").read_text(encoding="utf-8"))
+async def ui_execute():
+    html_path = STATIC_DIR / "execute.html"
+    if not html_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="execute.html not found. Create /static/execute.html at repo root.",
+        )
+    return HTMLResponse(html_path.read_text(encoding="utf-8"))
 
 @app.post("/execute/{symbol}", tags=["trading"])
 async def execute(

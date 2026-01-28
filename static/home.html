@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>xtrader</title>
+  <style>
+    :root {
+      font-family: "Trebuchet MS", "Candara", "Segoe UI", sans-serif;
+      color-scheme: dark;
+      --ink: #e8eefc;
+      --muted: rgba(232, 238, 252, 0.72);
+      --panel: rgba(10, 14, 24, 0.9);
+      --panel-border: rgba(110, 168, 254, 0.25);
+      --accent: #8fb6ff;
+      --accent-2: #ffcb5c;
+      --danger: #ff6b6b;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(900px 480px at 12% -10%, rgba(110,168,254,.22), transparent 60%),
+        radial-gradient(700px 420px at 90% 0%, rgba(255,203,92,.18), transparent 55%),
+        linear-gradient(180deg, #090c18 0%, #05070d 100%);
+    }
+
+    .noise {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(transparent 94%, rgba(255,255,255,.02) 95%),
+        linear-gradient(90deg, transparent 94%, rgba(255,255,255,.02) 95%);
+      background-size: 20px 20px, 24px 24px;
+      opacity: 0.35;
+    }
+
+    .wrap {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 42px 24px 60px;
+      display: grid;
+      gap: 28px;
+    }
+
+    header {
+      display: grid;
+      gap: 14px;
+      align-items: start;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,.16);
+      background: rgba(255,255,255,.06);
+      font-size: 12px;
+      letter-spacing: .6px;
+      text-transform: uppercase;
+      width: fit-content;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(30px, 5vw, 44px);
+      letter-spacing: .3px;
+    }
+
+    .subtitle {
+      font-size: 15px;
+      color: var(--muted);
+      max-width: 640px;
+      line-height: 1.5;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 24px;
+      align-items: stretch;
+    }
+
+    .panel {
+      position: relative;
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 18px;
+      padding: 18px;
+      box-shadow: 0 24px 60px rgba(0,0,0,.5);
+      overflow: hidden;
+    }
+
+    .panel::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(255,255,255,.05), transparent 45%);
+      pointer-events: none;
+    }
+
+    .panelTitle {
+      font-size: 12px;
+      letter-spacing: .6px;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    .routes {
+      display: grid;
+      gap: 10px;
+    }
+
+    .route {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,.1);
+      background: rgba(0,0,0,.28);
+      font-size: 13px;
+    }
+
+    .route code {
+      font-family: "Courier New", monospace;
+      color: var(--accent);
+    }
+
+    .ctaRow {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .btn {
+      border: 1px solid rgba(255,255,255,.16);
+      background: rgba(255,255,255,.06);
+      color: var(--ink);
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-weight: 700;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: transform .2s ease, border-color .2s ease, background .2s ease;
+    }
+
+    .btn.primary {
+      background: rgba(110,168,254,.25);
+      border-color: rgba(110,168,254,.55);
+      box-shadow: 0 12px 28px rgba(110,168,254,.18);
+    }
+
+    .btn.warn {
+      background: rgba(255,203,92,.18);
+      border-color: rgba(255,203,92,.45);
+    }
+
+    .btn:hover { transform: translateY(-2px); }
+
+    .stats {
+      display: grid;
+      gap: 10px;
+    }
+
+    .stat {
+      border: 1px solid rgba(255,255,255,.1);
+      background: rgba(0,0,0,.3);
+      border-radius: 14px;
+      padding: 12px;
+      display: grid;
+      gap: 6px;
+    }
+
+    .stat .k { font-size: 11px; color: var(--muted); letter-spacing: .4px; text-transform: uppercase; }
+    .stat .v { font-size: 16px; font-weight: 700; }
+    .stat .s { font-size: 12px; color: var(--muted); line-height: 1.45; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+
+    .tile {
+      border: 1px solid rgba(255,255,255,.1);
+      background: rgba(0,0,0,.25);
+      border-radius: 16px;
+      padding: 14px;
+      display: grid;
+      gap: 8px;
+      min-height: 130px;
+      transition: transform .25s ease, border-color .25s ease;
+    }
+
+    .tile:hover { transform: translateY(-4px); border-color: rgba(110,168,254,.45); }
+    .tile h3 { margin: 0; font-size: 14px; }
+    .tile p { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.45; }
+
+    .pulse {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .pulse span {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #40c080;
+      box-shadow: 0 0 12px rgba(64,192,128,.8);
+      animation: pulse 1.6s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(0.9); opacity: .7; }
+      50% { transform: scale(1.2); opacity: 1; }
+    }
+
+    @media (max-width: 980px) {
+      .hero { grid-template-columns: 1fr; }
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="noise"></div>
+  <div class="wrap">
+    <header>
+      <div class="badge">xtrader backend</div>
+      <h1>Signal intelligence, execution control, and audit-ready history.</h1>
+      <div class="subtitle">
+        Welcome to xtrader. Use the UI routes to run signals, execute trades, or inspect
+        backtests. Authenticated routes protect sensitive operations.
+      </div>
+    </header>
+
+    <section class="hero">
+      <div class="panel">
+        <div class="panelTitle">Routes</div>
+        <div class="routes">
+          <div class="route"><span>Signal UI</span><code>GET /signal-ui</code></div>
+          <div class="route"><span>Execute UI</span><code>GET /ui/execute</code></div>
+          <div class="route"><span>Backtest UI</span><code>GET /backtest</code></div>
+          <div class="route"><span>Auth</span><code>GET /login</code></div>
+        </div>
+        <div class="ctaRow">
+          <a class="btn primary" href="/ui/execute">Open Execute UI</a>
+          <a class="btn" href="/signal-ui">Open Signal UI</a>
+          <a class="btn warn" href="/backtest">Run Backtest</a>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panelTitle">Status</div>
+        <div class="stats">
+          <div class="stat">
+            <div class="k">Service</div>
+            <div class="v">Backend Online</div>
+            <div class="s">API endpoints are available. Auth-required routes prompt login.</div>
+          </div>
+          <div class="stat">
+            <div class="k">Auth</div>
+            <div class="v">Session Cookies</div>
+            <div class="s">Use /login or /signup to create and verify credentials.</div>
+          </div>
+          <div class="stat">
+            <div class="k">Pulse</div>
+            <div class="v"><span class="pulse"><span></span> Monitoring mode</span></div>
+            <div class="s">Use execute UI for realtime strategy runs.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="tile">
+        <h3>Execute + Control</h3>
+        <p>Trigger account-aware execution with risk checks and broker simulation.</p>
+      </div>
+      <div class="tile">
+        <h3>Signal Engine</h3>
+        <p>Generate structured signals with market data and strategy context.</p>
+      </div>
+      <div class="tile">
+        <h3>History & Audit</h3>
+        <p>Inspect trade history and snapshots for repeatable research.</p>
+      </div>
+    </section>
+  </div>
+</body>
+</html>
