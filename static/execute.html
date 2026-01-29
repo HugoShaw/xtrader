@@ -196,6 +196,7 @@
       display: grid;
       gap: 6px;
     }
+    .histItem.folded { display: none; }
     .histTop { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap: wrap; }
     .histMeta { font-size: 12px; opacity: .9; }
     .histMeta code { opacity: .9; }
@@ -1075,8 +1076,34 @@ function extractBarsFromBarsApiPayload(payload) {
     return { cssW, cssH };
   }
 
-  function isChartFolded(card) {
+function isChartFolded(card) {
   return card?.classList.contains("folded");
+}
+
+const SNAPSHOT_FOLD_KEY = "xtrader_snapshot_folded_v1";
+
+function snapshotFoldStorageKey(symbol) {
+  const sym = normalizeSymbol(symbol) || "default";
+  return `${SNAPSHOT_FOLD_KEY}:${sym}`;
+}
+
+function loadSnapshotFolded(symbol) {
+  try {
+    const v = localStorage.getItem(snapshotFoldStorageKey(symbol));
+    if (v === "1") return true;
+    if (v === "0") return false;
+  } catch (e) {
+    // ignore storage errors
+  }
+  return true; // default folded
+}
+
+function saveSnapshotFolded(symbol, folded) {
+  try {
+    localStorage.setItem(snapshotFoldStorageKey(symbol), folded ? "1" : "0");
+  } catch (e) {
+    // ignore storage errors
+  }
 }
 
 function toggleChartFold(card) {
@@ -1087,6 +1114,11 @@ function toggleChartFold(card) {
   if (!isChartFolded(card)) {
     const redraw = card.__redrawCandles;
     if (typeof redraw === "function") redraw();
+  }
+
+  if (card.classList.contains("snapshot")) {
+    const sym = card.getAttribute("data-symbol") || $("symbol")?.value || "";
+    saveSnapshotFolded(sym, isChartFolded(card));
   }
 }
 
@@ -2188,6 +2220,8 @@ function drawCandlesOnCanvas(canvas, ohlc, markers = [], view = null) {
     maxP = Math.max(maxP, b.h);
   }
   if (!(maxP > minP)) { maxP = minP + 1e-6; }
+  const rawMinP = minP;
+  const rawMaxP = maxP;
 
   // Add a little padding so MA/last line labels have breathing room
   const padPct = 0.02;
@@ -2375,6 +2409,35 @@ function drawCandlesOnCanvas(canvas, ohlc, markers = [], view = null) {
       `Last ${Number(lastClose).toFixed(3)}`,
       "rgba(232,238,252,.85)"
     );
+  }
+
+  // snapshot-only max/min labels
+  const card = canvas.closest(".chartCard");
+  if (card && card.classList.contains("snapshot")) {
+    if (Number.isFinite(rawMaxP)) {
+      const yMax = yOf(rawMaxP);
+      drawHLine(
+        ctx,
+        yMax,
+        padL,
+        padR,
+        cssW,
+        `Max ${Number(rawMaxP).toFixed(3)}`,
+        "rgba(255,107,107,.85)"
+      );
+    }
+    if (Number.isFinite(rawMinP)) {
+      const yMin = yOf(rawMinP);
+      drawHLine(
+        ctx,
+        yMin,
+        padL,
+        padR,
+        cssW,
+        `Min ${Number(rawMinP).toFixed(3)}`,
+        "rgba(64,192,128,.85)"
+      );
+    }
   }
 
   // -----------------------------
@@ -2624,7 +2687,7 @@ function bindCandleHover(canvas) {
   // -----------------------------
   // History
   // -----------------------------
-  const HISTORY_LIMIT = 30;
+  const HISTORY_LIMIT = 200;
   let historyRecords = [];
   let lastHistoryRows = [];
   const HISTORY_VISIBLE_LIMIT = 10;
@@ -2718,7 +2781,7 @@ function bindCandleHover(canvas) {
       const tb = parseShanghaiTsMs(b?.decision_ts) ?? 0;
       return tb - ta;
     });
-    historyRecords = sorted.slice(0, HISTORY_LIMIT);
+    historyRecords = sorted;
 
     if (!historyRecords.length) {
       container.textContent = "(empty)";
@@ -2728,11 +2791,10 @@ function bindCandleHover(canvas) {
     }
 
     const total = historyRecords.length;
-    const visibleCount = historyExpanded ? total : Math.min(HISTORY_VISIBLE_LIMIT, total);
-    const visibleItems = historyRecords.slice(0, visibleCount);
+    const visibleCount = Math.min(HISTORY_VISIBLE_LIMIT, total);
     const hiddenCount = Math.max(0, total - visibleCount);
 
-    container.innerHTML = visibleItems.map((r, idx) => {
+    container.innerHTML = historyRecords.map((r, idx) => {
       const sym = `<code>${escapeHtml(String(r.symbol || $("symbol").value || "—").trim() || "—")}</code>`;
       const ts = r.decision_ts || "—";
       const action = r.action ? actionPill(r.action) : "";
@@ -2744,9 +2806,10 @@ function bindCandleHover(canvas) {
         ? `<span class="pill info">conf=${escapeHtml(String(r.confidence))}</span>` : "";
       const st = statusPillFromDbStatus(r.status);
       const msg = r.message ? escapeHtml(String(r.message)) : "";
+      const foldedClass = (!historyExpanded && idx >= visibleCount) ? " folded" : "";
 
       return `
-        <div class="histItem">
+        <div class="histItem${foldedClass}">
           <div class="histTop">
             <div class="histMeta">
               ${st}
@@ -2782,13 +2845,15 @@ function bindCandleHover(canvas) {
       toggle.type = "button";
       toggle.className = "historyToggle";
       toggle.textContent = historyExpanded
-        ? `^ Show only first ${HISTORY_VISIBLE_LIMIT}`
-        : `v Show ${hiddenCount} more`;
+        ? `▲ Collapse to latest ${HISTORY_VISIBLE_LIMIT}`
+        : `▼ Show all (${hiddenCount} more)`;
       toggle.addEventListener("click", () => {
         historyExpanded = !historyExpanded;
         renderHistoryFromBackend(lastHistoryRows);
       });
-      container.appendChild(toggle);
+      const firstHidden = container.querySelector(".histItem.folded");
+      if (firstHidden) container.insertBefore(toggle, firstHidden);
+      else container.appendChild(toggle);
     }
 
     // summary
@@ -2907,8 +2972,10 @@ async function renderIndividualChartsFromHistory(symbol, records) {
     .sort((a, b) => b - a)[0];
   const latestLabel = Number.isFinite(latestTs) ? toShTsYmdHmsFromMs(latestTs) : shanghaiNowYmdHms();
 
+  const isFolded = loadSnapshotFolded(sym);
+
   list.innerHTML = `
-    <div class="chartCard snapshot folded" id="chartCard_0">
+    <div class="chartCard snapshot ${isFolded ? "folded" : ""}" id="chartCard_0" data-symbol="${escapeHtml(sym)}">
       <div class="chartTop">
         <div class="title"><span class="chev">▾</span><span class="badge">Snapshot</span>History Candles @ ${escapeHtml(String(latestLabel))}</div>
         <div class="meta">
@@ -2939,20 +3006,28 @@ async function renderIndividualChartsFromHistory(symbol, records) {
   const { start, end } = shanghaiSafeBarsRangeFromRecords(candidates);
 
   let currentOhlc = [];
-  try {
-    const payload = await fetchBarsFromApi(sym, start, end, freq, null); // no limit
-    currentOhlc = extractBarsFromBarsApiPayload(payload);
-  } catch (e) {
-    // Do not block trade history rendering if bars fail.
-    stopHistorySnapshotAutoRefresh();
+  if (!isShanghaiTradingTimeNow()) {
     const card = document.getElementById("chartCard_0");
     const hint = card?.querySelector(".chartHint");
     if (hint) {
-      hint.innerHTML = `<span class="pill bad">bars load failed</span> <span class="muted">${escapeHtml(String(e))}</span>`;
+      hint.innerHTML = `<span class="pill info">outside trading hours</span> <span class="muted">bars not fetched</span>`;
     }
-    renderError(`Bars API failed: ${e}`, "", { symbol: sym, start, end, freq });
-    // Requirement: stop auto execute when bars API fails.
-    if (timer) stopAuto();
+  } else {
+    try {
+      const payload = await fetchBarsFromApi(sym, start, end, freq, null); // no limit
+      currentOhlc = extractBarsFromBarsApiPayload(payload);
+    } catch (e) {
+      // Do not block trade history rendering if bars fail.
+      stopHistorySnapshotAutoRefresh();
+      const card = document.getElementById("chartCard_0");
+      const hint = card?.querySelector(".chartHint");
+      if (hint) {
+        hint.innerHTML = `<span class="pill bad">bars load failed</span> <span class="muted">${escapeHtml(String(e))}</span>`;
+      }
+      renderError(`Bars API failed: ${e}`, "", { symbol: sym, start, end, freq });
+      // Requirement: stop auto execute when bars API fails.
+      if (timer) stopAuto();
+    }
   }
 
   let currentMarkers = candidates

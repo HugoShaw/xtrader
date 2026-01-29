@@ -95,6 +95,62 @@ def fetch_cn_minute_bars(
     return df
 
 
+def fetch_cn_daily_bars(
+    *,
+    symbol: str,
+    start: str,
+    end: str,
+    adjust: str = "",
+) -> pd.DataFrame:
+    """
+    Fetch A-share daily bars via AkShare.
+    Output DataFrame indexed by date with normalized columns:
+      - open, high, low, close, volume
+      - amount (optional)
+    """
+    df = ak.stock_zh_a_hist(
+        symbol=symbol.strip(),
+        start_date=start,
+        end_date=end,
+        period="daily",
+        adjust=adjust,
+    )
+    if df is None or df.empty:
+        raise ValueError("No daily data returned. Try a closer date range.")
+
+    # Identify timestamp column
+    tcol = "日期" if "日期" in df.columns else ("时间" if "时间" in df.columns else None)
+    if tcol is None:
+        raise ValueError(f"Unexpected columns (missing 日期/时间): {list(df.columns)}")
+
+    df[tcol] = pd.to_datetime(df[tcol])
+    df = df.sort_values(tcol).set_index(tcol)
+
+    rename_map = {}
+    pairs = [
+        ("开盘", "open"),
+        ("最高", "high"),
+        ("最低", "low"),
+        ("收盘", "close"),
+        ("成交量", "volume"),
+        ("成交额", "amount"),
+    ]
+    for cn, en in pairs:
+        if cn in df.columns:
+            rename_map[cn] = en
+    df = df.rename(columns=rename_map)
+
+    if "close" not in df.columns:
+        raise ValueError(f"Unexpected columns (missing close): {list(df.columns)}")
+
+    for col in ["open", "high", "low", "close", "volume", "amount"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    df = df.dropna(subset=["close"])
+    return df
+
+
 def bars_to_payload(df: pd.DataFrame) -> Dict[str, Any]:
     """
     Convert DataFrame to lightweight JSON payload for frontend plotting.

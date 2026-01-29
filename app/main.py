@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime, timedelta
 import time
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -10,6 +11,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.concurrency import run_in_threadpool
+from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.logging_config import logger
@@ -25,7 +27,7 @@ from app.services.broker import PaperBroker
 from app.services.strategy import StrategyEngine
 from app.services.trade_history_db import TradeHistoryDB
 from app.services.backtest import BacktestParams, run_backtest, build_report_html
-from app.services.stock_api import fetch_cn_minute_bars, bars_to_payload
+from app.services.stock_api import fetch_cn_minute_bars, fetch_cn_daily_bars, bars_to_payload
 from app.services.auth import (
     AuthenticatedUser,
     clear_session_cookie,
@@ -40,10 +42,23 @@ from app.models_llm import LLMChatRequest, LLMChatResponse, ChatMessage
 from app.models import TradingContextIn, AccountState
 from app.models_auth import AuthStatus, LoginRequest, SignupRequest, UserPublic
 from app.models_admin import AdminUserCreate, AdminUserUpdate, AdminUserList, ApiUsageSummary
+from app.models_agent import StockStrategyRequest, StockStrategyAdvice, StockStrategyLLM
+from app.models_account import (
+    TradeAccountCreate,
+    TradeAccountUpdate,
+    TradeAccountOut,
+    TradeAccountDetail,
+    TradeAccountList,
+    TradePositionCreate,
+    TradePositionUpdate,
+    TradePositionOut,
+)
 from app.storage.auth_repo import UserRepo
 from app.storage.usage_repo import ApiUsageRepo
+from app.storage.account_repo import TradeAccountRepo
 
 from app.utils.textutils import normalize_cn_symbol
+from app.utils.timeutils import now_shanghai, fmt_shanghai
 
 # -------------------------
 # Auth helpers
@@ -92,7 +107,10 @@ async def lifespan(app: FastAPI):
     app.state.session_factory = session_factory
 
     # 4) DB-backed trade history
-    trade_history_db = TradeHistoryDB(session_factory, max_records=10)
+    trade_history_db = TradeHistoryDB(
+        session_factory,
+        max_records=int(settings.trade_history_max_records),
+    )
     app.state.trade_history_db = trade_history_db
 
     # 5) Core services
@@ -130,7 +148,7 @@ async def lifespan(app: FastAPI):
         broker=broker,
         fixed_lots=settings.fixed_slots,     # keep your existing setting name
         trade_history_db=trade_history_db,
-        trade_history_limit=10,
+        trade_history_limit=int(settings.trade_history_prompt_limit),
     )
     app.state.trading_engine = trading_engine
 
@@ -278,10 +296,29 @@ async def admin_usage_page(user: AuthenticatedUser = Depends(require_superuser))
     return html_path.read_text(encoding="utf-8")
 
 
+# -------------------------
+# Profile UI (account management)
+# -------------------------
+@app.get("/profile", response_class=HTMLResponse, tags=["profile-ui"])
+async def profile_page(user: AuthenticatedUser = Depends(require_user)):
+    html_path = STATIC_DIR / "profile.html"
+    if not html_path.exists():
+        raise HTTPException(status_code=404, detail="profile.html not found in /static")
+    return html_path.read_text(encoding="utf-8")
+
+
+@app.get("/agent/analyst", response_class=HTMLResponse, tags=["agent-ui"])
+async def analyst_page(user: AuthenticatedUser = Depends(require_user)):
+    html_path = STATIC_DIR / "analyst.html"
+    if not html_path.exists():
+        raise HTTPException(status_code=404, detail="analyst.html not found in /static")
+    return html_path.read_text(encoding="utf-8")
+
+
 @app.get("/admin/users", response_model=AdminUserList, tags=["admin"])
 async def admin_list_users(
     q: Optional[str] = Query(None, description="Search by username"),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(min(50, int(settings.trade_history_max_records)), ge=1, le=settings.trade_history_max_records),
     offset: int = Query(0, ge=0),
     user: AuthenticatedUser = Depends(require_superuser),
 ):
@@ -365,6 +402,361 @@ async def admin_api_usage(
         top_paths = await repo.top_paths(days=days, limit=8)
         top_users = await repo.top_users(days=days, limit=8)
         return ApiUsageSummary(days=days, series=series, top_paths=top_paths, top_users=top_users)
+
+
+# -------------------------
+# Account management APIs
+# -------------------------
+def _fmt_dt(dt) -> Optional[str]:
+    return dt.isoformat() if dt else None
+
+def _account_out(acc) -> TradeAccountOut:
+    return TradeAccountOut(
+        account_id=str(acc.account_id),
+        name=acc.name,
+        cash_cny=float(acc.cash_cny or 0.0),
+        base_currency=str(acc.base_currency or "CNY"),
+        created_at=_fmt_dt(acc.created_at),
+        updated_at=_fmt_dt(acc.updated_at),
+    )
+
+def _position_out(pos) -> TradePositionOut:
+    return TradePositionOut(
+        symbol=str(pos.symbol),
+        shares=int(pos.shares or 0),
+        avg_cost_cny=float(pos.avg_cost_cny) if pos.avg_cost_cny is not None else None,
+        unrealized_pnl_cny=float(pos.unrealized_pnl_cny) if pos.unrealized_pnl_cny is not None else None,
+        created_at=_fmt_dt(pos.created_at),
+        updated_at=_fmt_dt(pos.updated_at),
+    )
+
+
+def _strategy_schema_hint() -> dict:
+    return {
+        "type": "object",
+        "properties": {
+            "summary": {"type": "string"},
+            "confidence_breakdown": {"type": "object"},
+            "action_bias": {"type": "string", "enum": ["bullish", "bearish", "neutral"]},
+            "plan": {"type": "string"},
+            "key_levels": {"type": "array", "items": {"type": "string"}},
+            "risks": {"type": "array", "items": {"type": "string"}},
+            "confidence": {"type": "number"},
+        },
+        "required": ["summary", "confidence_breakdown", "action_bias", "plan", "key_levels", "risks", "confidence"],
+    }
+
+@app.get("/api/accounts", response_model=TradeAccountList, tags=["accounts"])
+async def list_accounts(user: AuthenticatedUser = Depends(require_user)):
+    async with session_scope(app.state.session_factory) as s:
+        repo = TradeAccountRepo(s)
+        items = await repo.list_accounts(user_id=int(user.id))
+        return TradeAccountList(items=[_account_out(a) for a in items], total=len(items))
+
+@app.post("/api/accounts", response_model=TradeAccountOut, tags=["accounts"])
+async def create_account(req: TradeAccountCreate, user: AuthenticatedUser = Depends(require_user)):
+    async with session_scope(app.state.session_factory) as s:
+        repo = TradeAccountRepo(s)
+        existing = await repo.get_account(user_id=int(user.id), account_id=req.account_id)
+        if existing:
+            raise HTTPException(status_code=409, detail="account_id already exists")
+        try:
+            acc = await repo.create_account(
+                user_id=int(user.id),
+                account_id=req.account_id,
+                name=req.name,
+                cash_cny=req.cash_cny,
+                base_currency=req.base_currency,
+            )
+            for pos in req.positions or []:
+                await repo.create_position(
+                    account_pk=acc.id,
+                    user_id=int(user.id),
+                    symbol=pos.symbol,
+                    shares=pos.shares,
+                    avg_cost_cny=pos.avg_cost_cny,
+                    unrealized_pnl_cny=pos.unrealized_pnl_cny,
+                )
+        except IntegrityError:
+            raise HTTPException(status_code=409, detail="account_id already exists")
+        return _account_out(acc)
+
+@app.get("/api/accounts/{account_id}", response_model=TradeAccountDetail, tags=["accounts"])
+async def get_account(account_id: str, user: AuthenticatedUser = Depends(require_user)):
+    async with session_scope(app.state.session_factory) as s:
+        repo = TradeAccountRepo(s)
+        acc = await repo.get_account(user_id=int(user.id), account_id=str(account_id))
+        if not acc:
+            raise HTTPException(status_code=404, detail="account not found")
+        positions = await repo.list_positions(account_pk=acc.id, user_id=int(user.id))
+        return TradeAccountDetail(
+            **_account_out(acc).model_dump(),
+            positions=[_position_out(p) for p in positions],
+        )
+
+@app.patch("/api/accounts/{account_id}", response_model=TradeAccountOut, tags=["accounts"])
+async def update_account(
+    account_id: str,
+    req: TradeAccountUpdate,
+    user: AuthenticatedUser = Depends(require_user),
+):
+    async with session_scope(app.state.session_factory) as s:
+        repo = TradeAccountRepo(s)
+        acc = await repo.get_account(user_id=int(user.id), account_id=str(account_id))
+        if not acc:
+            raise HTTPException(status_code=404, detail="account not found")
+        acc = await repo.update_account(
+            acc,
+            name=req.name,
+            cash_cny=req.cash_cny,
+            base_currency=req.base_currency,
+        )
+        return _account_out(acc)
+
+@app.delete("/api/accounts/{account_id}", tags=["accounts"])
+async def delete_account(account_id: str, user: AuthenticatedUser = Depends(require_user)):
+    async with session_scope(app.state.session_factory) as s:
+        repo = TradeAccountRepo(s)
+        acc = await repo.get_account(user_id=int(user.id), account_id=str(account_id))
+        if not acc:
+            raise HTTPException(status_code=404, detail="account not found")
+        deleted = await repo.delete_account(account_pk=acc.id, user_id=int(user.id))
+        if deleted <= 0:
+            raise HTTPException(status_code=404, detail="account not found")
+        return {"ok": True, "deleted": deleted, "account_id": account_id}
+
+@app.get("/api/accounts/{account_id}/positions", response_model=list[TradePositionOut], tags=["accounts"])
+async def list_positions(account_id: str, user: AuthenticatedUser = Depends(require_user)):
+    async with session_scope(app.state.session_factory) as s:
+        repo = TradeAccountRepo(s)
+        acc = await repo.get_account(user_id=int(user.id), account_id=str(account_id))
+        if not acc:
+            raise HTTPException(status_code=404, detail="account not found")
+        positions = await repo.list_positions(account_pk=acc.id, user_id=int(user.id))
+        return [_position_out(p) for p in positions]
+
+@app.post("/api/accounts/{account_id}/positions", response_model=TradePositionOut, tags=["accounts"])
+async def create_position(
+    account_id: str,
+    req: TradePositionCreate,
+    user: AuthenticatedUser = Depends(require_user),
+):
+    async with session_scope(app.state.session_factory) as s:
+        repo = TradeAccountRepo(s)
+        acc = await repo.get_account(user_id=int(user.id), account_id=str(account_id))
+        if not acc:
+            raise HTTPException(status_code=404, detail="account not found")
+        existing = await repo.get_position(account_pk=acc.id, user_id=int(user.id), symbol=req.symbol)
+        if existing:
+            raise HTTPException(status_code=409, detail="position already exists")
+        try:
+            pos = await repo.create_position(
+                account_pk=acc.id,
+                user_id=int(user.id),
+                symbol=req.symbol,
+                shares=req.shares,
+                avg_cost_cny=req.avg_cost_cny,
+                unrealized_pnl_cny=req.unrealized_pnl_cny,
+            )
+        except IntegrityError:
+            raise HTTPException(status_code=409, detail="position already exists")
+        return _position_out(pos)
+
+@app.patch("/api/accounts/{account_id}/positions/{symbol}", response_model=TradePositionOut, tags=["accounts"])
+async def update_position(
+    account_id: str,
+    symbol: str,
+    req: TradePositionUpdate,
+    user: AuthenticatedUser = Depends(require_user),
+):
+    async with session_scope(app.state.session_factory) as s:
+        repo = TradeAccountRepo(s)
+        acc = await repo.get_account(user_id=int(user.id), account_id=str(account_id))
+        if not acc:
+            raise HTTPException(status_code=404, detail="account not found")
+        pos = await repo.get_position(account_pk=acc.id, user_id=int(user.id), symbol=str(symbol).upper())
+        if not pos:
+            raise HTTPException(status_code=404, detail="position not found")
+        pos = await repo.update_position(
+            pos,
+            shares=req.shares,
+            avg_cost_cny=req.avg_cost_cny,
+            unrealized_pnl_cny=req.unrealized_pnl_cny,
+        )
+        return _position_out(pos)
+
+@app.delete("/api/accounts/{account_id}/positions/{symbol}", tags=["accounts"])
+async def delete_position(
+    account_id: str,
+    symbol: str,
+    user: AuthenticatedUser = Depends(require_user),
+):
+    async with session_scope(app.state.session_factory) as s:
+        repo = TradeAccountRepo(s)
+        acc = await repo.get_account(user_id=int(user.id), account_id=str(account_id))
+        if not acc:
+            raise HTTPException(status_code=404, detail="account not found")
+        deleted = await repo.delete_position(
+            account_pk=acc.id,
+            user_id=int(user.id),
+            symbol=str(symbol).upper(),
+        )
+        if deleted <= 0:
+            raise HTTPException(status_code=404, detail="position not found")
+        return {"ok": True, "deleted": deleted, "account_id": account_id, "symbol": str(symbol).upper()}
+
+
+@app.post("/api/agent/stock-strategy", response_model=StockStrategyAdvice, tags=["agent"])
+async def agent_stock_strategy(
+    req: StockStrategyRequest,
+    user: AuthenticatedUser = Depends(require_user),
+):
+    # 1) Load account + positions
+    async with session_scope(app.state.session_factory) as s:
+        repo = TradeAccountRepo(s)
+        acc = await repo.get_account(user_id=int(user.id), account_id=str(req.account_id))
+        if not acc:
+            raise HTTPException(status_code=404, detail="account not found")
+        positions = await repo.list_positions(account_pk=acc.id, user_id=int(user.id))
+
+    # 2) Fetch recent bars
+    now = now_shanghai()
+    end_dt = now.replace(hour=23, minute=59, second=59, microsecond=0)
+    start_dt = (end_dt - timedelta(days=int(req.lookback_days) - 1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    start_str = fmt_shanghai(start_dt)
+    end_str = fmt_shanghai(end_dt)
+    if not start_str or not end_str:
+        raise HTTPException(status_code=400, detail="invalid time window")
+
+    symbol = normalize_cn_symbol(req.symbol)
+    try:
+        if req.bar_type == "daily":
+            start_day = start_dt.strftime("%Y%m%d")
+            end_day = end_dt.strftime("%Y%m%d")
+            df = await run_in_threadpool(
+                fetch_cn_daily_bars,
+                symbol=symbol,
+                start=start_day,
+                end=end_day,
+            )
+        else:
+            df = await run_in_threadpool(
+                fetch_cn_minute_bars,
+                symbol=symbol,
+                start=start_str,
+                end=end_str,
+                freq=req.freq,
+                limit=480,
+            )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"stock_bars_error: {e}")
+
+    if df is None or df.empty or "close" not in df.columns:
+        raise HTTPException(status_code=400, detail="no price data available")
+
+    closes = df["close"].dropna()
+    if closes.empty:
+        raise HTTPException(status_code=400, detail="no close prices available")
+
+    first_close = float(closes.iloc[0])
+    last_close = float(closes.iloc[-1])
+    high = float(df["high"].dropna().max()) if "high" in df.columns else None
+    low = float(df["low"].dropna().min()) if "low" in df.columns else None
+    change_pct = ((last_close - first_close) / first_close * 100.0) if first_close else 0.0
+    returns = closes.pct_change().dropna()
+    vol_pct = float(returns.std() * 100.0) if not returns.empty else 0.0
+
+    # 3) Build prompt
+    acct_payload = {
+        "account_id": str(acc.account_id),
+        "cash_cny": float(acc.cash_cny or 0.0),
+        "base_currency": str(acc.base_currency or "CNY"),
+        "positions": [
+            {
+                "symbol": str(p.symbol),
+                "shares": int(p.shares or 0),
+                "avg_cost_cny": float(p.avg_cost_cny) if p.avg_cost_cny is not None else None,
+                "unrealized_pnl_cny": float(p.unrealized_pnl_cny) if p.unrealized_pnl_cny is not None else None,
+            }
+            for p in positions
+        ],
+    }
+
+    window_label = (
+        f"{start_dt.strftime('%Y-%m-%d')} ~ {end_dt.strftime('%Y-%m-%d')} (Asia/Shanghai)"
+        if req.bar_type == "daily"
+        else f"{start_str} ~ {end_str} (Asia/Shanghai)"
+    )
+    recent_stats = {
+        "data_window": window_label,
+        "bars": int(len(df)),
+        "first_close_cny": first_close,
+        "latest_close_cny": last_close,
+        "high_cny": high,
+        "low_cny": low,
+        "change_pct": round(change_pct, 2),
+        "volatility_pct": round(vol_pct, 2),
+    }
+
+    system_prompt = (
+        "You are a stock analyst agent. Provide next-day trading strategy advice "
+        "based on recent price action and the user's account context. "
+        "Be concise, practical, and risk-aware. Do not invent data."
+    )
+
+    user_prompt = (
+        "Account:\n"
+        f"{acct_payload}\n\n"
+        "Recent price summary:\n"
+        f"{recent_stats}\n\n"
+        f"Target symbol: {symbol}\n"
+        f"User note (optional): {req.user_note or ''}\n\n"
+        "Return a short summary, a next-day plan (entry/exit/hold guidance), "
+        "key levels, risks, and a confidence score between 0 and 1. "
+        "Also provide confidence_breakdown with keys buy/hold/sell, each 0..1."
+    )
+
+    llm: OpenAICompatLLM = app.state.llm
+    try:
+        parsed = await llm.chat_json(
+            system_prompt,
+            user_prompt,
+            _strategy_schema_hint(),
+            model_cls=StockStrategyLLM,
+            temperature=0.4,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"llm_error: {e}")
+
+    chart_points = []
+    try:
+        tail = df.tail(120)
+        for idx, row in tail.iterrows():
+            ts = idx.strftime("%Y-%m-%d" if req.bar_type == "daily" else "%Y-%m-%d %H:%M:%S")
+            close_v = row.get("close", None)
+            if close_v is None:
+                continue
+            chart_points.append({"ts": ts, "close": float(close_v)})
+    except Exception:
+        chart_points = []
+
+    return StockStrategyAdvice(
+        ok=True,
+        account_id=str(acc.account_id),
+        symbol=symbol,
+        data_window=recent_stats["data_window"],
+        latest_close_cny=last_close,
+        confidence_breakdown=parsed.confidence_breakdown or {},
+        summary=parsed.summary,
+        action_bias=parsed.action_bias,
+        plan=parsed.plan,
+        key_levels=parsed.key_levels,
+        risks=parsed.risks,
+        confidence=parsed.confidence,
+        chart=chart_points,
+    )
 
 
 @app.get("/risk", tags=["trading"])
@@ -566,6 +958,36 @@ async def api_stock_bars(
         return payload
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"stock_bars_error: {e}")
+
+
+@app.get("/api/stock/daily", tags=["trading"])
+async def api_stock_daily(
+    symbol: str,
+    start: str,
+    end: str,
+    adjust: str = "",
+    user: AuthenticatedUser = Depends(require_user),
+):
+    code = normalize_cn_symbol(symbol)
+    try:
+        df = await run_in_threadpool(
+            fetch_cn_daily_bars,
+            symbol=code,
+            start=start,
+            end=end,
+            adjust=adjust,
+        )
+        payload = bars_to_payload(df)
+        payload.update({
+            "symbol": code,
+            "start": start,
+            "end": end,
+            "adjust": adjust,
+            "count": len(df),
+        })
+        return payload
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"stock_daily_error: {e}")
 
 
 # -------------------------

@@ -16,7 +16,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
-        validate_default=True,  # 🔥 important
+        validate_default=True,
     )
 
     # Market data provider
@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     auth_secret_key: str = Field(default="dev-insecure-change-me", alias="AUTH_SECRET_KEY")
     auth_session_ttl_seconds: int = Field(default=60 * 60 * 12, alias="AUTH_SESSION_TTL_SECONDS")
     auth_cookie_name: str = Field(default="xtrader_session", alias="AUTH_COOKIE_NAME")
+
+    # Trade history
+    trade_history_max_records: int = Field(default=200, alias="TRADE_HISTORY_MAX_RECORDS")
+    trade_history_prompt_limit: int = Field(default=30, alias="TRADE_HISTORY_PROMPT_LIMIT")
 
     # Admin (comma-separated usernames)
     admin_usernames: str = Field(default="admin", alias="ADMIN_USERNAMES")

@@ -1,0 +1,846 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>xtrader · stock analyst agent</title>
+  <style>
+    :root {
+      font-family: "Gill Sans", "Optima", "Trebuchet MS", sans-serif;
+      --ink: #0f141f;
+      --muted: rgba(15, 20, 31, 0.58);
+      --accent: #ff8a5c;
+      --accent-2: #2a6ee8;
+      --accent-3: #22b27e;
+      --danger: #c73838;
+      --panel: rgba(255, 255, 255, 0.86);
+      --panel-border: rgba(15, 20, 31, 0.1);
+      --shadow: 0 22px 45px rgba(17, 22, 35, 0.18);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 520px at 12% -10%, rgba(255,138,92,0.18), transparent 60%),
+        radial-gradient(900px 480px at 88% 0%, rgba(42,110,232,0.18), transparent 60%),
+        linear-gradient(180deg, #f6efe9 0%, #eef2f8 100%);
+    }
+
+    .grid-noise {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(transparent 96%, rgba(0,0,0,.03) 97%),
+        linear-gradient(90deg, transparent 96%, rgba(0,0,0,.03) 97%);
+      background-size: 20px 20px, 26px 26px;
+      opacity: 0.18;
+    }
+
+    .wrap {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 100px 22px 70px;
+      display: grid;
+      gap: 20px;
+    }
+
+    header {
+      display: grid;
+      gap: 12px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(15,20,31,0.12);
+      background: rgba(255,255,255,0.75);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      width: fit-content;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(28px, 4.4vw, 46px);
+      letter-spacing: .3px;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      max-width: 680px;
+      line-height: 1.6;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 1.05fr;
+      gap: 18px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 18px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .panel::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(255,255,255,0.6), transparent 45%);
+      pointer-events: none;
+    }
+
+    .panel h2 {
+      margin: 0 0 12px;
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: .6px;
+      color: var(--muted);
+    }
+
+    .row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+      flex: 1;
+      min-width: 150px;
+    }
+
+    .field label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .6px;
+      color: var(--muted);
+    }
+
+    .field input, .field select, .field textarea {
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(15,20,31,0.14);
+      background: white;
+      font-size: 14px;
+    }
+
+    .btn {
+      border-radius: 12px;
+      border: 1px solid rgba(15,20,31,0.2);
+      background: rgba(255,255,255,0.9);
+      padding: 10px 14px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform .2s ease, border-color .2s ease, background .2s ease;
+    }
+    .btn.primary { background: rgba(42,110,232,0.14); border-color: rgba(42,110,232,0.5); color: #1e3f8b; }
+    .btn.accent { background: rgba(255,138,92,0.18); border-color: rgba(255,138,92,0.55); color: #7a3011; }
+    .btn.good { background: rgba(34,178,126,0.16); border-color: rgba(34,178,126,0.5); color: #0e6a3d; }
+    .btn:hover { transform: translateY(-2px); }
+
+    .card {
+      border: 1px solid rgba(15,20,31,0.12);
+      border-radius: 14px;
+      padding: 12px;
+      background: rgba(255,255,255,0.75);
+      display: grid;
+      gap: 6px;
+    }
+
+    .kicker { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; }
+    .value { font-size: 18px; font-weight: 700; }
+    .muted { color: var(--muted); font-size: 12px; }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(15,20,31,0.1);
+      background: rgba(255,255,255,0.75);
+      font-size: 11px;
+    }
+
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .table th, .table td {
+      padding: 8px;
+      border-bottom: 1px solid rgba(15,20,31,0.08);
+      text-align: left;
+    }
+    .table th {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .5px;
+    }
+
+    .result-block {
+      display: grid;
+      gap: 10px;
+    }
+
+    .result-title {
+      font-size: 16px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .bias {
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(15,20,31,0.12);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .6px;
+    }
+
+    .bias.bullish { background: rgba(34,178,126,0.2); color: #0e6a3d; }
+    .bias.bearish { background: rgba(199,56,56,0.16); color: #7a1a1a; }
+    .bias.neutral { background: rgba(15,20,31,0.08); color: #283047; }
+
+    .topbar {
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(1180px, calc(100% - 32px));
+      background: rgba(255,255,255,0.86);
+      border: 1px solid rgba(15,20,31,0.12);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 14px;
+      z-index: 20;
+      backdrop-filter: blur(10px);
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .nav a {
+      text-decoration: none;
+      color: var(--ink);
+      font-size: 12px;
+      letter-spacing: .4px;
+      text-transform: uppercase;
+      border: 1px solid rgba(15,20,31,0.12);
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.7);
+      transition: transform .2s ease, border-color .2s ease, background .2s ease;
+    }
+
+    .nav a:hover {
+      transform: translateY(-1px);
+      border-color: rgba(42,110,232,0.4);
+      background: rgba(42,110,232,0.12);
+    }
+
+    .topbar .brand {
+      font-weight: 700;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: .7px;
+      color: #1e3f8b;
+    }
+
+    .logout-btn {
+      border-radius: 999px;
+      border: 1px solid rgba(199,56,56,0.35);
+      background: rgba(199,56,56,0.12);
+      color: #7a1a1a;
+      font-weight: 700;
+      padding: 7px 12px;
+      cursor: pointer;
+      transition: transform .2s ease, border-color .2s ease, background .2s ease;
+    }
+
+    .logout-btn:hover { transform: translateY(-1px); border-color: rgba(199,56,56,0.6); }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 10px;
+    }
+
+    .stat {
+      border: 1px solid rgba(15,20,31,0.12);
+      border-radius: 12px;
+      padding: 10px;
+      background: rgba(255,255,255,0.7);
+      display: grid;
+      gap: 6px;
+    }
+
+    .stat .label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .6px;
+      color: var(--muted);
+    }
+
+    .stat .value {
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .meter {
+      height: 12px;
+      border-radius: 999px;
+      background: rgba(15,20,31,0.08);
+      overflow: hidden;
+      border: 1px solid rgba(15,20,31,0.08);
+    }
+
+    .meter-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, rgba(34,178,126,0.9), rgba(42,110,232,0.9));
+      box-shadow: 0 8px 18px rgba(42,110,232,0.25);
+      transition: width 0.4s ease;
+    }
+
+    .sparkline {
+      background: rgba(255,255,255,0.7);
+      border-radius: 14px;
+      padding: 10px;
+      border: 1px solid rgba(15,20,31,0.12);
+    }
+
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="grid-noise"></div>
+  <div class="topbar">
+    <div class="brand">xtrader</div>
+    <nav class="nav">
+      <a href="/">Home</a>
+      <a href="/profile">Profile</a>
+      <a href="/signal-ui">Signal</a>
+      <a href="/ui/execute">Execute</a>
+      <a href="/backtest">Backtest</a>
+      <a href="/agent/analyst">Analyst</a>
+    </nav>
+    <button class="logout-btn" id="logoutBtn">Logout</button>
+  </div>
+  <div class="wrap">
+    <header>
+      <div class="badge">Stock Analyst Agent</div>
+      <h1>Next-day strategy insights from your account context</h1>
+      <p class="subtitle">Select a trade account and stock, pull recent price action, and get a structured plan with risk-aware guidance.</p>
+      <div id="userLine" class="pill">Loading profile…</div>
+    </header>
+
+    <section class="layout">
+      <div class="panel">
+        <h2>Analysis setup</h2>
+        <div class="row">
+          <div class="field">
+            <label for="accountSelect">Trade account</label>
+            <select id="accountSelect"></select>
+          </div>
+          <div class="field">
+            <label for="symbolSelect">Stock symbol</label>
+            <select id="symbolSelect"></select>
+          </div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="lookbackInput">Lookback days</label>
+            <input id="lookbackInput" type="number" min="1" max="30" value="5" />
+          </div>
+          <div class="field">
+            <label for="barTypeInput">Bar type</label>
+            <select id="barTypeInput">
+              <option value="daily" selected>Daily</option>
+              <option value="minute">Minute</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="freqInput">Bar frequency</label>
+            <select id="freqInput">
+              <option value="1">1 min</option>
+              <option value="5" selected>5 min</option>
+              <option value="15">15 min</option>
+              <option value="30">30 min</option>
+              <option value="60">60 min</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label for="userNote">User note (optional)</label>
+          <textarea id="userNote" rows="3" placeholder="Risk preference, upcoming events, or constraints."></textarea>
+        </div>
+        <div class="row">
+          <button class="btn accent" id="runAgentBtn">Run analysis</button>
+          <button class="btn" id="refreshAccountsBtn">Refresh accounts</button>
+        </div>
+
+        <div class="card" style="margin-top:14px;">
+          <div class="kicker">Account snapshot</div>
+          <div id="accountSummary" class="muted">Select an account to see positions.</div>
+          <table class="table" style="margin-top:10px;">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Shares</th>
+                <th>Avg cost</th>
+                <th>Unrealized</th>
+              </tr>
+            </thead>
+            <tbody id="positionsTable"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Strategy response</h2>
+        <div id="resultPanel" class="card">
+          <div class="kicker">No analysis yet</div>
+          <div class="muted">Run the agent to see strategy insights.</div>
+        </div>
+        <div class="card" style="margin-top:14px;">
+          <div class="kicker">Chart preview</div>
+          <div id="chartPanel" class="muted">Run the agent to see recent price trend.</div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const api = (path, opts = {}) => fetch(path, {
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      ...opts,
+    }).then(async (res) => {
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = data.detail || data.message || res.statusText;
+        throw new Error(msg);
+      }
+      return data;
+    });
+
+    const els = {
+      accountSelect: document.getElementById("accountSelect"),
+      symbolSelect: document.getElementById("symbolSelect"),
+      lookbackInput: document.getElementById("lookbackInput"),
+      barTypeInput: document.getElementById("barTypeInput"),
+      freqInput: document.getElementById("freqInput"),
+      userNote: document.getElementById("userNote"),
+      accountSummary: document.getElementById("accountSummary"),
+      positionsTable: document.getElementById("positionsTable"),
+      resultPanel: document.getElementById("resultPanel"),
+      chartPanel: document.getElementById("chartPanel"),
+      userLine: document.getElementById("userLine"),
+    };
+
+    let accountCache = [];
+    let currentAccount = null;
+    let isRunning = false;
+    const runBtn = document.getElementById("runAgentBtn");
+    const CACHE_KEY = "xtrader.analyst.cache.v1";
+    let cacheState = {};
+
+    function money(v) {
+      if (v === null || v === undefined || v === "") return "--";
+      const num = Number(v);
+      if (Number.isNaN(num)) return "--";
+      return num.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    }
+
+    function escapeHtml(str) {
+      return String(str || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function renderAccountSelect() {
+      els.accountSelect.innerHTML = "";
+      accountCache.forEach((acc) => {
+        const opt = document.createElement("option");
+        opt.value = acc.account_id;
+        opt.textContent = acc.account_id;
+        els.accountSelect.appendChild(opt);
+      });
+      if (accountCache.length) {
+        els.accountSelect.value = accountCache[0].account_id;
+        loadAccountDetail(accountCache[0].account_id);
+      } else {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = "No accounts found";
+        els.accountSelect.appendChild(opt);
+      }
+    }
+
+    function renderPositions(positions = []) {
+      els.positionsTable.innerHTML = "";
+      if (!positions.length) {
+        const row = document.createElement("tr");
+        row.innerHTML = "<td colspan='4' class='muted'>No positions</td>";
+        els.positionsTable.appendChild(row);
+        return;
+      }
+      positions.forEach((pos) => {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${pos.symbol}</td>
+          <td>${pos.shares}</td>
+          <td>${money(pos.avg_cost_cny)}</td>
+          <td style="color:${(Number(pos.unrealized_pnl_cny) || 0) >= 0 ? '#0e6a3d' : '#7a1a1a'}">${money(pos.unrealized_pnl_cny)}</td>
+        `;
+        els.positionsTable.appendChild(row);
+      });
+    }
+
+    function renderAccountSummary(detail) {
+      if (!detail) {
+        els.accountSummary.textContent = "Select an account to see positions.";
+        renderPositions([]);
+        renderSymbolSelect([]);
+        return;
+      }
+      els.accountSummary.innerHTML = `
+        <div class="row">
+          <div class="card">
+            <div class="kicker">Account ID</div>
+            <div class="value">${detail.account_id}</div>
+          </div>
+          <div class="card">
+            <div class="kicker">Cash</div>
+            <div class="value">${money(detail.cash_cny)} CNY</div>
+          </div>
+          <div class="card">
+            <div class="kicker">Positions</div>
+            <div class="value">${detail.positions ? detail.positions.length : 0}</div>
+          </div>
+        </div>
+      `;
+      renderPositions(detail.positions || []);
+      renderSymbolSelect(detail.positions || []);
+    }
+
+    function renderSymbolSelect(positions) {
+      const items = positions || [];
+      els.symbolSelect.innerHTML = "";
+      if (!items.length) {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = "No positions in this account";
+        els.symbolSelect.appendChild(opt);
+        return;
+      }
+      items.forEach((pos) => {
+        const opt = document.createElement("option");
+        opt.value = pos.symbol;
+        opt.textContent = pos.symbol;
+        els.symbolSelect.appendChild(opt);
+      });
+      els.symbolSelect.value = items[0].symbol;
+    }
+
+    function renderResult(result) {
+      if (!result) {
+        els.resultPanel.innerHTML = "<div class='kicker'>No analysis yet</div><div class='muted'>Run the agent to see strategy insights.</div>";
+        els.chartPanel.textContent = "Run the agent to see recent price trend.";
+        return;
+      }
+      const biasClass = `bias ${result.action_bias || "neutral"}`;
+      const summary = escapeHtml(result.summary);
+      const plan = escapeHtml(result.plan);
+      const levels = (result.key_levels || []).map((x) => `<li>${escapeHtml(x)}</li>`).join("");
+      const risks = (result.risks || []).map((x) => `<li>${escapeHtml(x)}</li>`).join("");
+      const confPct = Math.max(0, Math.min(100, Math.round((result.confidence || 0) * 100)));
+      const breakdown = result.confidence_breakdown || {};
+      const buyPct = Math.max(0, Math.min(100, Math.round((breakdown.buy || 0) * 100)));
+      const holdPct = Math.max(0, Math.min(100, Math.round((breakdown.hold || 0) * 100)));
+      const sellPct = Math.max(0, Math.min(100, Math.round((breakdown.sell || 0) * 100)));
+      els.resultPanel.innerHTML = `
+        <div class="result-block">
+          <div class="result-title">
+            Strategy for ${result.symbol}
+            <span class="${biasClass}">${result.action_bias}</span>
+          </div>
+          <div class="muted">Data window: ${result.data_window}</div>
+          <div class="stat-grid">
+            <div class="stat">
+              <div class="label">Buy confidence</div>
+              <div class="value">${buyPct}%</div>
+              <div class="meter"><div class="meter-fill" style="width:${buyPct}%"></div></div>
+            </div>
+            <div class="stat">
+              <div class="label">Hold confidence</div>
+              <div class="value">${holdPct}%</div>
+              <div class="meter"><div class="meter-fill" style="width:${holdPct}%"></div></div>
+            </div>
+            <div class="stat">
+              <div class="label">Sell confidence</div>
+              <div class="value">${sellPct}%</div>
+              <div class="meter"><div class="meter-fill" style="width:${sellPct}%"></div></div>
+            </div>
+          </div>
+          <div class="stat-grid">
+            <div class="stat">
+              <div class="label">Latest close</div>
+              <div class="value">${money(result.latest_close_cny)} CNY</div>
+            </div>
+            <div class="stat">
+              <div class="label">Confidence</div>
+              <div class="value">${confPct}%</div>
+              <div class="meter">
+                <div class="meter-fill" style="width:${confPct}%"></div>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="kicker">Summary</div>
+            <div>${summary}</div>
+          </div>
+          <div class="card">
+            <div class="kicker">Next-day plan</div>
+            <div>${plan}</div>
+          </div>
+          <div class="row">
+            <div class="card" style="flex:1;">
+              <div class="kicker">Key levels</div>
+              <ul>${levels}</ul>
+            </div>
+            <div class="card" style="flex:1;">
+              <div class="kicker">Risks</div>
+              <ul>${risks}</ul>
+            </div>
+          </div>
+        </div>
+      `;
+      renderChart(result.chart || []);
+    }
+
+    function cacheKeyFor(result) {
+      if (!result) return "";
+      return [
+        result.account_id || "",
+        result.symbol || "",
+        result.data_window || "",
+        "v1",
+      ].join("|");
+    }
+
+    function loadCache() {
+      try {
+        cacheState = JSON.parse(localStorage.getItem(CACHE_KEY) || "{}");
+      } catch {
+        cacheState = {};
+      }
+    }
+
+    function saveCache(result) {
+      if (!result) return;
+      const key = cacheKeyFor(result);
+      if (!key) return;
+      cacheState[key] = {
+        saved_at: Date.now(),
+        result,
+      };
+      localStorage.setItem(CACHE_KEY, JSON.stringify(cacheState));
+    }
+
+    function findCachedResult(accountId, symbol) {
+      const keys = Object.keys(cacheState || {});
+      for (const k of keys) {
+        const entry = cacheState[k];
+        if (!entry || !entry.result) continue;
+        if (entry.result.account_id === accountId && entry.result.symbol === symbol) {
+          return entry.result;
+        }
+      }
+      return null;
+    }
+
+    function setRunning(state) {
+      isRunning = state;
+      if (isRunning) {
+        runBtn.textContent = "Running…";
+        runBtn.setAttribute("disabled", "disabled");
+      } else {
+        runBtn.textContent = "Run analysis";
+        runBtn.removeAttribute("disabled");
+      }
+    }
+
+    function renderChart(points) {
+      if (!points || !points.length) {
+        els.chartPanel.textContent = "No chart data returned.";
+        return;
+      }
+      const width = 520;
+      const height = 180;
+      const padding = 16;
+      const closes = points.map((p) => Number(p.close)).filter((v) => !Number.isNaN(v));
+      const minV = Math.min(...closes);
+      const maxV = Math.max(...closes);
+      const span = maxV - minV || 1;
+      const step = (width - padding * 2) / Math.max(points.length - 1, 1);
+      const coords = points.map((p, i) => {
+        const x = padding + step * i;
+        const y = padding + (height - padding * 2) * (1 - (Number(p.close) - minV) / span);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      }).join(" ");
+      const last = points[points.length - 1];
+      els.chartPanel.innerHTML = `
+        <div class="sparkline">
+          <svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="lineGlow" x1="0" x2="1">
+                <stop offset="0%" stop-color="rgba(42,110,232,0.9)" />
+                <stop offset="100%" stop-color="rgba(255,138,92,0.9)" />
+              </linearGradient>
+            </defs>
+            <polyline fill="none" stroke="url(#lineGlow)" stroke-width="2.5" points="${coords}" />
+            <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" stroke="rgba(15,20,31,0.12)" stroke-width="1" />
+          </svg>
+        </div>
+        <div class="row" style="margin-top:8px;">
+          <div class="pill">Latest: ${money(last.close)}</div>
+          <div class="pill">Range: ${money(minV)} - ${money(maxV)}</div>
+        </div>
+      `;
+    }
+
+    async function loadAccounts() {
+      const data = await api("/api/accounts");
+      accountCache = data.items || [];
+      renderAccountSelect();
+    }
+
+    async function loadAccountDetail(accountId) {
+      if (!accountId) return;
+      const detail = await api(`/api/accounts/${encodeURIComponent(accountId)}`);
+      currentAccount = detail;
+      renderAccountSummary(detail);
+      const symbol = els.symbolSelect.value;
+      if (symbol) {
+        const cached = findCachedResult(accountId, symbol);
+        if (cached) {
+          renderResult(cached);
+        }
+      }
+    }
+
+    async function runAnalysis() {
+      if (isRunning) return;
+      const accountId = els.accountSelect.value;
+      const symbol = els.symbolSelect.value;
+      if (!accountId) {
+        alert("Please select an account.");
+        return;
+      }
+      if (!symbol) {
+        alert("Please select a stock symbol.");
+        return;
+      }
+      const payload = {
+        account_id: accountId,
+        symbol,
+        lookback_days: Number(els.lookbackInput.value || 5),
+        freq: els.freqInput.value,
+        bar_type: els.barTypeInput.value,
+        user_note: els.userNote.value.trim() || null,
+      };
+      renderResult(null);
+      setRunning(true);
+      try {
+        const result = await api("/api/agent/stock-strategy", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        renderResult(result);
+        saveCache(result);
+      } finally {
+        setRunning(false);
+      }
+    }
+
+    async function loadUser() {
+      try {
+        const me = await api("/auth/me");
+        if (me && me.user) {
+          els.userLine.textContent = `Logged in as ${me.user.username}`;
+        } else {
+          els.userLine.textContent = "Logged in";
+        }
+      } catch (err) {
+        els.userLine.textContent = "Login required";
+      }
+    }
+
+    els.accountSelect.addEventListener("change", (e) => loadAccountDetail(e.target.value).catch((err) => alert(err.message)));
+    els.symbolSelect.addEventListener("change", (e) => {
+      const accountId = els.accountSelect.value;
+      const symbol = e.target.value;
+      if (!accountId || !symbol) return;
+      const cached = findCachedResult(accountId, symbol);
+      if (cached) {
+        renderResult(cached);
+      }
+    });
+    runBtn.addEventListener("click", () => runAnalysis().catch((err) => alert(err.message)));
+    document.getElementById("refreshAccountsBtn").addEventListener("click", () => loadAccounts().catch((err) => alert(err.message)));
+    els.barTypeInput.addEventListener("change", () => {
+      const isDaily = els.barTypeInput.value === "daily";
+      els.freqInput.disabled = isDaily;
+    });
+    document.getElementById("logoutBtn").addEventListener("click", async () => {
+      try {
+        await api("/auth/logout", { method: "POST" });
+      } catch (err) {
+        alert(err.message);
+        return;
+      }
+      window.location.href = "/login";
+    });
+
+    loadUser();
+    loadCache();
+    loadAccounts().catch((err) => alert(err.message));
+    els.freqInput.disabled = true;
+  </script>
+</body>
+</html>

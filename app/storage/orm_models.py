@@ -12,6 +12,7 @@ from sqlalchemy import (
     Date,
     Text,
     Index,
+    ForeignKey,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -101,3 +102,41 @@ class ApiUsageORM(Base):
 
 
 Index("ix_api_usage_day_path", ApiUsageORM.created_at, ApiUsageORM.path)
+
+
+class TradeAccountORM(Base):
+    __tablename__ = "trade_accounts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True, default=0)
+    account_id: Mapped[str] = mapped_column(String(64), index=True, default="default")
+    name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    base_currency: Mapped[str] = mapped_column(String(8), default="CNY")
+    cash_cny: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+Index("ix_trade_accounts_user_account", TradeAccountORM.user_id, TradeAccountORM.account_id, unique=True)
+
+
+class TradePositionORM(Base):
+    __tablename__ = "trade_positions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    account_pk: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("trade_accounts.id", ondelete="CASCADE"),
+        index=True,
+    )
+    user_id: Mapped[int] = mapped_column(Integer, index=True, default=0)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    shares: Mapped[int] = mapped_column(Integer, default=0)
+    avg_cost_cny: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    unrealized_pnl_cny: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+Index("ix_trade_positions_account_symbol", TradePositionORM.account_pk, TradePositionORM.symbol, unique=True)
+Index("ix_trade_positions_user_symbol", TradePositionORM.user_id, TradePositionORM.symbol)

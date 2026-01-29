@@ -1,0 +1,733 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>xtrader profile · account dashboard</title>
+  <style>
+    :root {
+      font-family: "Avenir Next", "Futura", "Trebuchet MS", sans-serif;
+      --ink: #10131c;
+      --muted: rgba(16, 19, 28, 0.62);
+      --accent: #e57d34;
+      --accent-2: #2f6fed;
+      --accent-3: #2bb673;
+      --danger: #d34848;
+      --panel: rgba(255, 255, 255, 0.82);
+      --panel-border: rgba(16, 19, 28, 0.08);
+      --shadow: 0 22px 50px rgba(15, 20, 32, 0.14);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      min-height: 100vh;
+      background:
+        radial-gradient(1200px 520px at 12% -10%, rgba(229,125,52,0.18), transparent 60%),
+        radial-gradient(980px 520px at 85% 0%, rgba(47,111,237,0.18), transparent 60%),
+        linear-gradient(180deg, #f7f1eb 0%, #eef1f7 100%);
+    }
+
+    .noise {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(transparent 95%, rgba(0,0,0,.03) 96%),
+        linear-gradient(90deg, transparent 95%, rgba(0,0,0,.03) 96%);
+      background-size: 20px 20px, 24px 24px;
+      opacity: 0.18;
+    }
+
+    .wrap {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 32px 22px 70px;
+      display: grid;
+      gap: 22px;
+    }
+
+    header {
+      display: grid;
+      gap: 10px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.7);
+      border: 1px solid rgba(16,19,28,0.12);
+      width: fit-content;
+      font-size: 12px;
+      letter-spacing: .4px;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(28px, 4vw, 44px);
+      letter-spacing: .4px;
+    }
+
+    .subtitle {
+      margin: 0;
+      font-size: 14px;
+      color: var(--muted);
+      max-width: 680px;
+      line-height: 1.6;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 1.1fr;
+      gap: 20px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 18px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .panel::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(255,255,255,0.55), transparent 45%);
+      pointer-events: none;
+    }
+
+    .panel h2 {
+      margin: 0 0 12px;
+      font-size: 16px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--muted);
+    }
+
+    .row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .card {
+      border: 1px solid rgba(16,19,28,0.12);
+      border-radius: 14px;
+      padding: 12px;
+      background: rgba(255,255,255,0.75);
+      display: grid;
+      gap: 6px;
+    }
+
+    .account-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }
+
+    .account-card {
+      cursor: pointer;
+      transition: transform .2s ease, border-color .2s ease;
+    }
+    .account-card:hover { transform: translateY(-3px); border-color: rgba(229,125,52,0.6); }
+    .account-card.active {
+      border-color: rgba(47,111,237,0.6);
+      box-shadow: 0 12px 28px rgba(47,111,237,0.18);
+    }
+
+    .kicker { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; }
+    .value { font-size: 18px; font-weight: 700; }
+    .muted { color: var(--muted); font-size: 12px; }
+
+    .field {
+      display: grid;
+      gap: 6px;
+      flex: 1;
+      min-width: 140px;
+    }
+    .field label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .6px;
+      color: var(--muted);
+    }
+    .field input {
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(16,19,28,0.14);
+      font-size: 14px;
+      background: white;
+    }
+
+    .btn {
+      border-radius: 12px;
+      border: 1px solid rgba(16,19,28,0.2);
+      background: rgba(255,255,255,0.8);
+      padding: 10px 14px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform .2s ease, background .2s ease, border-color .2s ease;
+    }
+    .btn.primary { background: rgba(47,111,237,0.12); border-color: rgba(47,111,237,0.5); color: #1b3a85; }
+    .btn.accent { background: rgba(229,125,52,0.15); border-color: rgba(229,125,52,0.55); color: #8a3c10; }
+    .btn.good { background: rgba(43,182,115,0.15); border-color: rgba(43,182,115,0.45); color: #0e6a3d; }
+    .btn.danger { background: rgba(211,72,72,0.15); border-color: rgba(211,72,72,0.4); color: #912a2a; }
+    .btn:hover { transform: translateY(-2px); }
+
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .table th, .table td {
+      padding: 10px 8px;
+      border-bottom: 1px solid rgba(16,19,28,0.1);
+      text-align: left;
+    }
+    .table th {
+      text-transform: uppercase;
+      letter-spacing: .6px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(16,19,28,0.1);
+      background: rgba(255,255,255,0.7);
+      font-size: 11px;
+    }
+
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .note {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="noise"></div>
+  <div class="wrap">
+    <header>
+      <div class="eyebrow">Profile · Trade Accounts</div>
+      <h1>Account management dashboard</h1>
+      <p class="subtitle">Maintain personal trade account states, manage positions, and keep cash + PnL up to date.</p>
+      <div id="userLine" class="pill">Loading profile…</div>
+    </header>
+
+    <section class="layout">
+      <div class="panel">
+        <h2>Your accounts</h2>
+        <div id="accountGrid" class="account-grid"></div>
+        <div class="card" style="margin-top:14px;">
+          <div class="kicker">Create new account</div>
+          <div class="row">
+            <div class="field">
+              <label for="newAccountId">Account ID</label>
+              <input id="newAccountId" placeholder="e.g. margin-main" />
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="newAccountCash">Cash (CNY)</label>
+              <input id="newAccountCash" type="number" step="0.01" value="0" />
+            </div>
+            <div class="field">
+              <label for="newAccountCurrency">Base Currency</label>
+              <input id="newAccountCurrency" value="CNY" />
+            </div>
+          </div>
+          <div class="card" style="margin-top:12px;">
+            <div class="kicker">Initial positions</div>
+            <div class="row">
+              <div class="field">
+                <label for="newPosSymbol">Symbol</label>
+                <input id="newPosSymbol" placeholder="e.g. 600519" />
+              </div>
+              <div class="field">
+                <label for="newPosShares">Shares</label>
+                <input id="newPosShares" type="number" step="1" value="0" />
+              </div>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="newPosAvgCost">Avg cost (CNY)</label>
+                <input id="newPosAvgCost" type="number" step="0.01" />
+              </div>
+              <div class="field">
+                <label for="newPosUnrealized">Unrealized PnL (CNY)</label>
+                <input id="newPosUnrealized" type="number" step="0.01" />
+              </div>
+            </div>
+            <div class="row">
+              <button class="btn" id="addNewPosBtn">Add position</button>
+              <button class="btn" id="clearNewPosBtn">Clear positions</button>
+            </div>
+            <table class="table" style="margin-top:10px;">
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Shares</th>
+                  <th>Avg cost</th>
+                  <th>Unrealized</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="newPositionsTable"></tbody>
+            </table>
+          </div>
+          <div class="row">
+            <button class="btn accent" id="createAccountBtn">Add account</button>
+            <button class="btn" id="refreshAccountsBtn">Refresh</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Account details</h2>
+        <div id="accountDetails" class="card">
+          <div class="kicker">No account selected</div>
+          <div class="muted">Pick an account on the left to view positions.</div>
+        </div>
+
+        <div id="positionsPanel" style="margin-top:14px; display:none;">
+          <div class="card">
+            <div class="kicker">Account editor</div>
+            <div class="row">
+              <div class="field">
+                <label for="editAccountCash">Cash (CNY)</label>
+                <input id="editAccountCash" type="number" step="0.01" />
+              </div>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="editAccountCurrency">Base Currency</label>
+                <input id="editAccountCurrency" />
+              </div>
+            </div>
+            <div class="row">
+              <button class="btn good" id="saveAccountBtn">Save changes</button>
+              <button class="btn danger" id="deleteAccountBtn">Delete account</button>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top:14px;">
+            <div class="kicker">Add / update position</div>
+            <div class="row">
+              <div class="field">
+                <label for="posSymbol">Symbol</label>
+                <input id="posSymbol" placeholder="e.g. 600519" />
+              </div>
+              <div class="field">
+                <label for="posShares">Shares</label>
+                <input id="posShares" type="number" step="1" value="0" />
+              </div>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="posAvgCost">Avg cost (CNY)</label>
+                <input id="posAvgCost" type="number" step="0.01" />
+              </div>
+              <div class="field">
+                <label for="posUnrealized">Unrealized PnL (CNY)</label>
+                <input id="posUnrealized" type="number" step="0.01" />
+              </div>
+            </div>
+            <div class="row">
+              <button class="btn primary" id="savePositionBtn">Save position</button>
+              <button class="btn" id="resetPositionBtn">Reset</button>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top:14px;">
+            <div class="footer">
+              <div class="kicker">Positions</div>
+              <div id="positionSummary" class="pill">0 positions</div>
+            </div>
+            <table class="table" id="positionsTable">
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Shares</th>
+                  <th>Avg cost</th>
+                  <th>Unrealized</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="note">This dashboard is tied to your personal user profile. Only you can view or edit your accounts.</div>
+  </div>
+
+  <script>
+    const api = (path, opts = {}) => fetch(path, {
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      ...opts,
+    }).then(async (res) => {
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = data.detail || data.message || res.statusText;
+        throw new Error(msg);
+      }
+      return data;
+    });
+
+    const state = {
+      accounts: [],
+      selected: null,
+      positions: [],
+      editingSymbol: null,
+      newPositions: [],
+    };
+
+    const els = {
+      accountGrid: document.getElementById("accountGrid"),
+      accountDetails: document.getElementById("accountDetails"),
+      positionsPanel: document.getElementById("positionsPanel"),
+      positionSummary: document.getElementById("positionSummary"),
+      positionsTable: document.querySelector("#positionsTable tbody"),
+      userLine: document.getElementById("userLine"),
+      newAccountId: document.getElementById("newAccountId"),
+      newAccountCash: document.getElementById("newAccountCash"),
+      newAccountCurrency: document.getElementById("newAccountCurrency"),
+      editAccountCash: document.getElementById("editAccountCash"),
+      editAccountCurrency: document.getElementById("editAccountCurrency"),
+      posSymbol: document.getElementById("posSymbol"),
+      posShares: document.getElementById("posShares"),
+      posAvgCost: document.getElementById("posAvgCost"),
+      posUnrealized: document.getElementById("posUnrealized"),
+      newPosSymbol: document.getElementById("newPosSymbol"),
+      newPosShares: document.getElementById("newPosShares"),
+      newPosAvgCost: document.getElementById("newPosAvgCost"),
+      newPosUnrealized: document.getElementById("newPosUnrealized"),
+      newPositionsTable: document.getElementById("newPositionsTable"),
+    };
+
+    function money(v) {
+      if (v === null || v === undefined || v === "") return "--";
+      const num = Number(v);
+      if (Number.isNaN(num)) return "--";
+      return num.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    }
+
+    function renderAccounts() {
+      els.accountGrid.innerHTML = "";
+      state.accounts.forEach((acc) => {
+        const card = document.createElement("div");
+        card.className = "card account-card" + (state.selected && state.selected.account_id === acc.account_id ? " active" : "");
+        card.innerHTML = `
+          <div class="kicker">${acc.base_currency || "CNY"} account</div>
+          <div class="value">${acc.account_id}</div>
+          <div class="muted">Cash: ${money(acc.cash_cny)} CNY</div>
+        `;
+        card.addEventListener("click", () => selectAccount(acc.account_id));
+        els.accountGrid.appendChild(card);
+      });
+
+      if (!state.accounts.length) {
+        const empty = document.createElement("div");
+        empty.className = "card";
+        empty.innerHTML = "<div class='muted'>No accounts yet. Create your first account.</div>";
+        els.accountGrid.appendChild(empty);
+      }
+    }
+
+    function renderDetails() {
+      if (!state.selected) {
+        els.accountDetails.innerHTML = "<div class='kicker'>No account selected</div><div class='muted'>Pick an account on the left to view positions.</div>";
+        els.positionsPanel.style.display = "none";
+        return;
+      }
+
+      const totalPnl = state.positions.reduce((acc, p) => acc + (Number(p.unrealized_pnl_cny) || 0), 0);
+      els.accountDetails.innerHTML = `
+        <div class="kicker">Selected account</div>
+        <div class="value">${state.selected.account_id}</div>
+        <div class="muted">Account ID: ${state.selected.account_id}</div>
+        <div class="row" style="margin-top:10px;">
+          <div class="card">
+            <div class="kicker">Cash</div>
+            <div class="value">${money(state.selected.cash_cny)} CNY</div>
+          </div>
+          <div class="card">
+            <div class="kicker">Positions</div>
+            <div class="value">${state.positions.length}</div>
+          </div>
+          <div class="card">
+            <div class="kicker">Unrealized PnL</div>
+            <div class="value" style="color:${totalPnl >= 0 ? '#0e6a3d' : '#912a2a'}">${money(totalPnl)} CNY</div>
+          </div>
+        </div>
+      `;
+      els.positionsPanel.style.display = "block";
+      els.editAccountCash.value = state.selected.cash_cny ?? 0;
+      els.editAccountCurrency.value = state.selected.base_currency || "CNY";
+    }
+
+    function renderPositions() {
+      els.positionsTable.innerHTML = "";
+      state.positions.forEach((pos) => {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${pos.symbol}</td>
+          <td>${pos.shares}</td>
+          <td>${money(pos.avg_cost_cny)}</td>
+          <td style="color:${(Number(pos.unrealized_pnl_cny) || 0) >= 0 ? '#0e6a3d' : '#912a2a'}">${money(pos.unrealized_pnl_cny)}</td>
+          <td>
+            <button class="btn" data-action="edit">Edit</button>
+            <button class="btn danger" data-action="delete">Delete</button>
+          </td>
+        `;
+        row.querySelector("[data-action='edit']").addEventListener("click", () => loadPosition(pos));
+        row.querySelector("[data-action='delete']").addEventListener("click", () => deletePosition(pos.symbol));
+        els.positionsTable.appendChild(row);
+      });
+      els.positionSummary.textContent = `${state.positions.length} positions`;
+    }
+
+    function renderNewPositions() {
+      els.newPositionsTable.innerHTML = "";
+      state.newPositions.forEach((pos, idx) => {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${pos.symbol}</td>
+          <td>${pos.shares}</td>
+          <td>${money(pos.avg_cost_cny)}</td>
+          <td style="color:${(Number(pos.unrealized_pnl_cny) || 0) >= 0 ? '#0e6a3d' : '#912a2a'}">${money(pos.unrealized_pnl_cny)}</td>
+          <td><button class="btn danger" data-idx="${idx}">Remove</button></td>
+        `;
+        row.querySelector("button").addEventListener("click", (e) => {
+          const i = Number(e.target.getAttribute("data-idx"));
+          state.newPositions.splice(i, 1);
+          renderNewPositions();
+        });
+        els.newPositionsTable.appendChild(row);
+      });
+      if (!state.newPositions.length) {
+        const row = document.createElement("tr");
+        row.innerHTML = "<td colspan='5' class='muted'>No initial positions added.</td>";
+        els.newPositionsTable.appendChild(row);
+      }
+    }
+
+    function resetPositionForm() {
+      state.editingSymbol = null;
+      els.posSymbol.value = "";
+      els.posShares.value = 0;
+      els.posAvgCost.value = "";
+      els.posUnrealized.value = "";
+      els.posSymbol.removeAttribute("disabled");
+    }
+
+    function resetNewPositionForm() {
+      els.newPosSymbol.value = "";
+      els.newPosShares.value = 0;
+      els.newPosAvgCost.value = "";
+      els.newPosUnrealized.value = "";
+    }
+
+    function loadPosition(pos) {
+      state.editingSymbol = pos.symbol;
+      els.posSymbol.value = pos.symbol;
+      els.posShares.value = pos.shares ?? 0;
+      els.posAvgCost.value = pos.avg_cost_cny ?? "";
+      els.posUnrealized.value = pos.unrealized_pnl_cny ?? "";
+      els.posSymbol.setAttribute("disabled", "disabled");
+    }
+
+    async function refreshAccounts() {
+      state.accounts = await api("/api/accounts");
+      state.accounts = state.accounts.items || state.accounts;
+      renderAccounts();
+      if (state.selected) {
+        const stillThere = state.accounts.find((a) => a.account_id === state.selected.account_id);
+        if (!stillThere) {
+          state.selected = null;
+          state.positions = [];
+        }
+      }
+      renderDetails();
+      renderPositions();
+    }
+
+    async function selectAccount(accountId) {
+      const detail = await api(`/api/accounts/${encodeURIComponent(accountId)}`);
+      state.selected = detail;
+      state.positions = detail.positions || [];
+      renderAccounts();
+      renderDetails();
+      renderPositions();
+      resetPositionForm();
+    }
+
+    async function createAccount() {
+      const payload = {
+        account_id: els.newAccountId.value.trim(),
+        cash_cny: Number(els.newAccountCash.value || 0),
+        base_currency: els.newAccountCurrency.value.trim() || "CNY",
+        positions: state.newPositions.map((p) => ({
+          symbol: p.symbol,
+          shares: p.shares,
+          avg_cost_cny: p.avg_cost_cny,
+          unrealized_pnl_cny: p.unrealized_pnl_cny,
+        })),
+      };
+      await api("/api/accounts", { method: "POST", body: JSON.stringify(payload) });
+      els.newAccountId.value = "";
+      els.newAccountCash.value = 0;
+      els.newAccountCurrency.value = "CNY";
+      state.newPositions = [];
+      renderNewPositions();
+      await refreshAccounts();
+    }
+
+    async function saveAccount() {
+      if (!state.selected) return;
+      const payload = {
+        cash_cny: Number(els.editAccountCash.value || 0),
+        base_currency: els.editAccountCurrency.value.trim() || "CNY",
+      };
+      const updated = await api(`/api/accounts/${encodeURIComponent(state.selected.account_id)}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      });
+      state.selected = { ...state.selected, ...updated };
+      await refreshAccounts();
+      await selectAccount(state.selected.account_id);
+    }
+
+    async function deleteAccount() {
+      if (!state.selected) return;
+      if (!confirm("Delete this account and all positions?")) return;
+      await api(`/api/accounts/${encodeURIComponent(state.selected.account_id)}`, { method: "DELETE" });
+      state.selected = null;
+      state.positions = [];
+      await refreshAccounts();
+    }
+
+    async function savePosition() {
+      if (!state.selected) return;
+      const payload = {
+        symbol: els.posSymbol.value.trim(),
+        shares: Number(els.posShares.value || 0),
+        avg_cost_cny: els.posAvgCost.value === "" ? null : Number(els.posAvgCost.value),
+        unrealized_pnl_cny: els.posUnrealized.value === "" ? null : Number(els.posUnrealized.value),
+      };
+
+      if (!payload.symbol) {
+        alert("Symbol is required.");
+        return;
+      }
+
+      if (state.editingSymbol) {
+        await api(`/api/accounts/${encodeURIComponent(state.selected.account_id)}/positions/${encodeURIComponent(state.editingSymbol)}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            shares: payload.shares,
+            avg_cost_cny: payload.avg_cost_cny,
+            unrealized_pnl_cny: payload.unrealized_pnl_cny,
+          }),
+        });
+      } else {
+        await api(`/api/accounts/${encodeURIComponent(state.selected.account_id)}/positions`, {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+      }
+
+      await selectAccount(state.selected.account_id);
+      resetPositionForm();
+    }
+
+    async function deletePosition(symbol) {
+      if (!state.selected) return;
+      if (!confirm(`Delete position ${symbol}?`)) return;
+      await api(`/api/accounts/${encodeURIComponent(state.selected.account_id)}/positions/${encodeURIComponent(symbol)}`, {
+        method: "DELETE",
+      });
+      await selectAccount(state.selected.account_id);
+      resetPositionForm();
+    }
+
+    function addNewPosition() {
+      const symbol = els.newPosSymbol.value.trim().toUpperCase();
+      if (!symbol) {
+        alert("Symbol is required.");
+        return;
+      }
+      const shares = Number(els.newPosShares.value || 0);
+      const avg_cost_cny = els.newPosAvgCost.value === "" ? null : Number(els.newPosAvgCost.value);
+      const unrealized_pnl_cny = els.newPosUnrealized.value === "" ? null : Number(els.newPosUnrealized.value);
+      const existing = state.newPositions.find((p) => p.symbol === symbol);
+      if (existing) {
+        existing.shares = shares;
+        existing.avg_cost_cny = avg_cost_cny;
+        existing.unrealized_pnl_cny = unrealized_pnl_cny;
+      } else {
+        state.newPositions.push({ symbol, shares, avg_cost_cny, unrealized_pnl_cny });
+      }
+      renderNewPositions();
+      resetNewPositionForm();
+    }
+
+    async function loadUser() {
+      try {
+        const me = await api("/auth/me");
+        if (me && me.user) {
+          els.userLine.textContent = `Logged in as ${me.user.username}`;
+        } else {
+          els.userLine.textContent = "Logged in";
+        }
+      } catch (err) {
+        els.userLine.textContent = "Login required";
+      }
+    }
+
+    document.getElementById("createAccountBtn").addEventListener("click", () => createAccount().catch((e) => alert(e.message)));
+    document.getElementById("refreshAccountsBtn").addEventListener("click", () => refreshAccounts().catch((e) => alert(e.message)));
+    document.getElementById("saveAccountBtn").addEventListener("click", () => saveAccount().catch((e) => alert(e.message)));
+    document.getElementById("deleteAccountBtn").addEventListener("click", () => deleteAccount().catch((e) => alert(e.message)));
+    document.getElementById("savePositionBtn").addEventListener("click", () => savePosition().catch((e) => alert(e.message)));
+    document.getElementById("resetPositionBtn").addEventListener("click", resetPositionForm);
+    document.getElementById("addNewPosBtn").addEventListener("click", addNewPosition);
+    document.getElementById("clearNewPosBtn").addEventListener("click", () => {
+      state.newPositions = [];
+      renderNewPositions();
+      resetNewPositionForm();
+    });
+
+    loadUser();
+    refreshAccounts().catch((e) => alert(e.message));
+    renderNewPositions();
+  </script>
+</body>
+</html>
