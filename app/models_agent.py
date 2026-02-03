@@ -59,3 +59,78 @@ class StockStrategyLLM(BaseModel):
     key_levels: List[str] = Field(default_factory=list)
     risks: List[str] = Field(default_factory=list)
     confidence: float = Field(ge=0.0, le=1.0)
+
+
+class StockExpertRequest(BaseModel):
+    account_id: str = Field(..., min_length=1, max_length=64)
+    lookback_days: int = Field(default=540, ge=30, le=2000)
+    adjust: str = Field(default="qfq", max_length=8)
+    authorize_trade: bool = False
+    execute: bool = False
+    order_lots: int = Field(default=1, ge=1, le=20)
+    max_symbols: int = Field(default=20, ge=1, le=50)
+
+    @field_validator("account_id")
+    @classmethod
+    def _norm_account_id(cls, v: str) -> str:
+        vv = str(v or "").strip()
+        if not vv:
+            raise ValueError("account_id is required")
+        return vv
+
+
+class ExpertTimeframeAdvice(BaseModel):
+    timeframe: Literal["daily", "weekly", "monthly", "quarterly"]
+    action_bias: Literal["bullish", "bearish", "neutral"]
+    confidence: float = Field(ge=0.0, le=1.0)
+    summary: str
+    last_close_cny: Optional[float] = None
+    change_pct: Optional[float] = None
+    short_ma: Optional[float] = None
+    long_ma: Optional[float] = None
+
+
+class ExpertNewsItem(BaseModel):
+    title: str
+    published_at: Optional[str] = None
+    source: Optional[str] = None
+    url: Optional[str] = None
+    keywords: Optional[str] = None
+
+
+class ExpertRealtimeQuote(BaseModel):
+    ts: Optional[str] = None
+    last_price_cny: Optional[float] = None
+    amount: Optional[float] = None
+    volume: Optional[float] = None
+
+
+class StockExpertSymbolAdvice(BaseModel):
+    symbol: str
+    shares: int = 0
+    cash_cny: float = 0.0
+    strategy: List[ExpertTimeframeAdvice] = Field(default_factory=list)
+    overall_action: Literal["BUY", "SELL", "HOLD"]
+    overall_reason: str
+    suggested_lots: Optional[int] = None
+    news: List[ExpertNewsItem] = Field(default_factory=list)
+    realtime: Optional[ExpertRealtimeQuote] = None
+    execution: Optional[dict] = None
+
+
+class StockExpertAdvice(BaseModel):
+    ok: bool = True
+    account_id: str
+    asof: str
+    authorized: bool = False
+    executed: bool = False
+    symbols: List[StockExpertSymbolAdvice] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+
+
+class StockExpertLLM(BaseModel):
+    action: Literal["BUY", "SELL", "HOLD"]
+    suggested_lots: int = Field(ge=0, le=50)
+    confidence: float = Field(ge=0.0, le=1.0)
+    reason: str
+    risk_notes: Optional[str] = None

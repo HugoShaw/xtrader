@@ -1,0 +1,1565 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>xtrader · stock expert</title>
+  <style>
+    :root {
+      font-family: "Bodoni MT", "Didot", "Garamond", "Times New Roman", serif;
+      --ink: #11141a;
+      --muted: rgba(17, 20, 26, 0.62);
+      --accent: #f2b950;
+      --accent-2: #1b5b4b;
+      --accent-3: #e06a5c;
+      --panel: rgba(255, 255, 255, 0.88);
+      --panel-border: rgba(17, 20, 26, 0.12);
+      --shadow: 0 28px 60px rgba(11, 16, 24, 0.18);
+      --shadow-soft: 0 12px 28px rgba(11, 16, 24, 0.12);
+      --ring: 0 0 0 2px rgba(27, 91, 75, 0.15);
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(820px 520px at 12% -8%, rgba(242,185,80,0.25), transparent 55%),
+        radial-gradient(900px 520px at 85% 6%, rgba(27,91,75,0.18), transparent 60%),
+        radial-gradient(600px 400px at 85% 80%, rgba(224,106,92,0.16), transparent 60%),
+        linear-gradient(180deg, #f7f1e6 0%, #e9eef4 100%);
+    }
+
+    .grain {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(transparent 96%, rgba(0,0,0,.04) 97%),
+        linear-gradient(90deg, transparent 96%, rgba(0,0,0,.04) 97%);
+      background-size: 24px 24px, 32px 32px;
+      opacity: 0.18;
+    }
+
+    .topbar {
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(1180px, calc(100% - 32px));
+      background: rgba(255,255,255,0.88);
+      border: 1px solid rgba(12,17,24,0.12);
+      border-radius: 18px;
+      box-shadow: var(--shadow-soft);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 14px;
+      z-index: 20;
+      backdrop-filter: blur(10px);
+    }
+
+    .brand {
+      font-weight: 700;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      color: #193a33;
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .nav a {
+      text-decoration: none;
+      color: var(--ink);
+      font-size: 12px;
+      letter-spacing: .4px;
+      text-transform: uppercase;
+      border: 1px solid rgba(12,17,24,0.12);
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.7);
+      transition: transform .2s ease, border-color .2s ease, background .2s ease, box-shadow .2s ease;
+    }
+
+    .nav a:hover {
+      transform: translateY(-1px);
+      border-color: rgba(46,107,95,0.4);
+      background: rgba(46,107,95,0.12);
+      box-shadow: var(--ring);
+    }
+
+    .logout-btn {
+      border-radius: 999px;
+      border: 1px solid rgba(222,90,74,0.35);
+      background: rgba(222,90,74,0.12);
+      color: #7a1a1a;
+      font-weight: 700;
+      padding: 7px 12px;
+      cursor: pointer;
+      transition: transform .2s ease, border-color .2s ease, background .2s ease;
+    }
+
+    .logout-btn:hover {
+      transform: translateY(-1px);
+      border-color: rgba(222,90,74,0.6);
+    }
+
+    .wrap {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 100px 22px 70px;
+      display: grid;
+      gap: 20px;
+    }
+
+    header {
+      display: grid;
+      gap: 10px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(12,17,24,0.12);
+      background: rgba(255,255,255,0.75);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      width: fit-content;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(30px, 4.6vw, 52px);
+      letter-spacing: .8px;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      max-width: 720px;
+      line-height: 1.6;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 1.2fr;
+      gap: 18px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 20px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+      position: relative;
+      overflow: hidden;
+      animation: rise 0.5s ease;
+    }
+
+    .panel::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(255,255,255,0.65), transparent 45%);
+      pointer-events: none;
+    }
+
+    .panel h2 {
+      margin: 0 0 12px;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: .6px;
+      color: var(--muted);
+    }
+
+    .row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+      flex: 1;
+      min-width: 150px;
+    }
+
+    .field label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .6px;
+      color: var(--muted);
+    }
+
+    .field input, .field select {
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(12,17,24,0.14);
+      background: white;
+      font-size: 14px;
+    }
+
+    .btn {
+      border-radius: 12px;
+      border: 1px solid rgba(12,17,24,0.2);
+      background: rgba(255,255,255,0.9);
+      padding: 10px 14px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform .2s ease, border-color .2s ease, background .2s ease, box-shadow .2s ease;
+    }
+    .btn.primary { background: rgba(46,107,95,0.14); border-color: rgba(46,107,95,0.5); color: #1c3c34; }
+    .btn.accent { background: rgba(246,183,60,0.2); border-color: rgba(246,183,60,0.55); color: #7a4f00; }
+    .btn.warn { background: rgba(222,90,74,0.16); border-color: rgba(222,90,74,0.5); color: #7a1a1a; }
+    .btn:hover { transform: translateY(-2px); box-shadow: var(--shadow-soft); }
+
+    .card {
+      border: 1px solid rgba(12,17,24,0.12);
+      border-radius: 14px;
+      padding: 12px;
+      background: rgba(255,255,255,0.75);
+      display: grid;
+      gap: 6px;
+      box-shadow: var(--shadow-soft);
+    }
+
+    .kicker {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .6px;
+    }
+
+    .muted { color: var(--muted); font-size: 12px; }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(12,17,24,0.1);
+      background: rgba(255,255,255,0.75);
+      font-size: 11px;
+    }
+
+    .table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .table th, .table td {
+      padding: 8px;
+      border-bottom: 1px solid rgba(12,17,24,0.08);
+      text-align: left;
+    }
+    .table th {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .5px;
+    }
+
+    .badge-action {
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(12,17,24,0.12);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .6px;
+    }
+    .badge-action.buy { background: rgba(46,107,95,0.2); color: #1c3c34; }
+    .badge-action.sell { background: rgba(222,90,74,0.18); color: #7a1a1a; }
+    .badge-action.hold { background: rgba(12,17,24,0.08); color: #283047; }
+
+    .symbol-grid {
+      display: grid;
+      gap: 12px;
+    }
+
+    .symbolTabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+
+    .symbolTabs button {
+      border: 1px solid rgba(12,17,24,0.14);
+      background: rgba(255,255,255,0.7);
+      color: var(--ink);
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .symbolTabs button.active {
+      border-color: rgba(46,107,95,0.5);
+      background: rgba(46,107,95,0.18);
+      color: #1c3c34;
+    }
+
+    .timeframe-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 10px;
+    }
+
+    .news-list {
+      display: grid;
+      gap: 6px;
+      font-size: 12px;
+    }
+
+    .news-item {
+      border-left: 3px solid rgba(46,107,95,0.4);
+      padding-left: 8px;
+      color: var(--ink);
+    }
+
+    .expert-card {
+      border: 1px solid rgba(12,17,24,0.12);
+      border-radius: 14px;
+      background: rgba(255,255,255,0.82);
+      overflow: hidden;
+      box-shadow: var(--shadow-soft);
+    }
+
+    .expert-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(12,17,24,0.08);
+      cursor: pointer;
+    }
+
+    .expert-head .title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+    }
+
+    .expert-head .chev {
+      transition: transform .2s ease;
+      font-size: 14px;
+      opacity: .7;
+    }
+
+    .expert-card.folded .expert-body { display: none; }
+    .expert-card.folded .expert-head .chev { transform: rotate(-90deg); }
+
+    .expert-body { padding: 12px 14px; display: grid; gap: 10px; }
+
+    .chartWrap {
+      border: 1px solid rgba(12,17,24,0.1);
+      border-radius: 12px;
+      background: rgba(255,255,255,0.8);
+      padding: 8px;
+      display: grid;
+      gap: 6px;
+    }
+    .chartWrap[data-error="rate"] {
+      border-color: rgba(224,106,92,0.5);
+      background: rgba(224,106,92,0.08);
+    }
+
+    canvas.candle {
+      width: 100%;
+      height: 220px;
+      display: block;
+    }
+
+    .chartLegend {
+      display: flex;
+      gap: 10px;
+      font-size: 11px;
+      color: var(--muted);
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .chartLegend .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      display: inline-block;
+      margin-right: 6px;
+    }
+
+    .candleTip {
+      position: absolute;
+      background: rgba(17, 20, 26, 0.9);
+      color: #f5f6f8;
+      padding: 6px 8px;
+      border-radius: 8px;
+      font-size: 11px;
+      pointer-events: none;
+      transform: translate(-50%, -120%);
+      white-space: nowrap;
+      display: none;
+    }
+
+    .chartTabs {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+
+    .chartTabs button {
+      border: 1px solid rgba(12,17,24,0.14);
+      background: rgba(255,255,255,0.7);
+      color: var(--ink);
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+
+    .chartTabs button.active {
+      border-color: rgba(46,107,95,0.5);
+      background: rgba(46,107,95,0.18);
+      color: #1c3c34;
+    }
+
+    .historyList {
+      display: grid;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .historyItem {
+      border: 1px solid rgba(12,17,24,0.12);
+      background: rgba(255,255,255,0.7);
+      border-radius: 12px;
+      padding: 8px 10px;
+      font-size: 12px;
+      display: grid;
+      gap: 4px;
+    }
+
+    .historyMeta {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .deltaBoard {
+      border: 1px solid rgba(12,17,24,0.12);
+      border-radius: 14px;
+      background: rgba(255,255,255,0.8);
+      padding: 10px 12px;
+      display: grid;
+      gap: 8px;
+      font-size: 12px;
+    }
+
+    .deltaRow {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(12, 17, 24, 0.45);
+      backdrop-filter: blur(6px);
+      z-index: 50;
+      padding: 20px;
+    }
+
+    .modal-overlay.show {
+      display: flex;
+    }
+
+    .modal {
+      width: min(520px, 92vw);
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 18px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+    }
+
+    @keyframes rise {
+      from { transform: translateY(10px); opacity: 0.6; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="grain"></div>
+  <div class="topbar">
+    <div class="brand">xtrader</div>
+    <nav class="nav">
+      <a href="/">Home</a>
+      <a href="/profile">Profile</a>
+      <a href="/signal-ui">Signal</a>
+      <a href="/ui/execute">Execute</a>
+      <a href="/backtest">Backtest</a>
+      <a href="/agent/analyst">Analyst</a>
+      <a href="/agent/expert">Expert</a>
+    </nav>
+    <button class="logout-btn" id="logoutBtn">Logout</button>
+  </div>
+
+  <div class="wrap">
+    <div style="height: 12px;"></div>
+    <section class="layout">
+      <div class="panel">
+        <h2>Expert setup</h2>
+        <div class="row">
+          <div class="field">
+            <label for="accountSelect">Trade account</label>
+            <select id="accountSelect"></select>
+          </div>
+          <div class="field">
+            <label for="lookbackInput">Lookback days</label>
+            <input id="lookbackInput" type="number" min="30" max="2000" value="540" />
+          </div>
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="adjustSelect">Adjust</label>
+            <select id="adjustSelect">
+              <option value="qfq" selected>qfq</option>
+              <option value="hfq">hfq</option>
+              <option value="">none</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="orderLots">Order lots (paper)</label>
+            <input id="orderLots" type="number" min="1" max="20" value="1" />
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:14px;">
+          <div class="kicker">Automation</div>
+          <div class="muted">Auto-run requires authorization and execute enabled.</div>
+          <label style="display:flex; gap:8px; align-items:center; font-size:13px; margin-top:6px;">
+            <input type="checkbox" id="autoRunToggle" />
+            Enable auto-run expert trades
+          </label>
+          <label style="display:flex; gap:8px; align-items:center; font-size:13px; margin-top:6px;">
+            Interval:
+            <select id="autoRunInterval" style="max-width:140px;">
+              <option value="5">5 min</option>
+              <option value="15">15 min</option>
+              <option value="30">30 min</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="card" style="margin-top:14px;">
+          <div class="kicker">Account snapshot</div>
+          <div id="accountSummary" class="muted">Select an account to see positions.</div>
+          <table class="table" style="margin-top:10px;">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Shares</th>
+                <th>Avg cost</th>
+                <th>Unrealized</th>
+              </tr>
+            </thead>
+            <tbody id="positionsTable"></tbody>
+          </table>
+        </div>
+
+        <div class="deltaBoard" id="deltaBoard">
+          <div class="kicker">Shares change</div>
+          <div class="muted">No changes yet.</div>
+        </div>
+
+        <div class="row" style="margin-top:14px;">
+          <button class="btn accent" id="runExpertBtn">Run expert</button>
+          <button class="btn warn" id="stopAutoBtn" style="display:none;">Stop auto-run</button>
+        </div>
+      </div>
+
+      <div id="resultPanel" class="panel">
+        <div class="kicker">Expert output</div>
+        <div class="muted">Run the expert to see multi-horizon strategy guidance.</div>
+      </div>
+    </section>
+  </div>
+
+  <div class="modal-overlay" id="authModal">
+    <div class="modal">
+      <div class="kicker">Authorization required</div>
+      <h3 style="margin:6px 0 4px;">Allow the expert to operate your paper account</h3>
+      <p class="muted">This prompt will not appear again for the next 24 hours once approved.</p>
+      <label style="display:flex; gap:8px; align-items:center; font-size:13px; margin-top:10px;">
+        <input type="checkbox" id="authorizeToggle" />
+        I authorize the expert to operate my account in paper mode.
+      </label>
+      <label style="display:flex; gap:8px; align-items:center; font-size:13px; margin-top:6px;">
+        <input type="checkbox" id="executeToggle" />
+        Execute suggested paper trades now.
+      </label>
+      <div class="row" style="margin-top:14px; justify-content:flex-end;">
+        <button class="btn" id="authCancelBtn">Cancel</button>
+        <button class="btn accent" id="authConfirmBtn">Authorize & Run</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const api = (path, opts = {}) => fetch(path, {
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      ...opts,
+    }).then(async (res) => {
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = data.detail || data.message || res.statusText;
+        throw new Error(msg);
+      }
+      return data;
+    });
+
+    const els = {
+      accountSelect: document.getElementById("accountSelect"),
+      lookbackInput: document.getElementById("lookbackInput"),
+      adjustSelect: document.getElementById("adjustSelect"),
+      orderLots: document.getElementById("orderLots"),
+      authorizeToggle: document.getElementById("authorizeToggle"),
+      executeToggle: document.getElementById("executeToggle"),
+      authModal: document.getElementById("authModal"),
+      authConfirmBtn: document.getElementById("authConfirmBtn"),
+      authCancelBtn: document.getElementById("authCancelBtn"),
+      autoRunToggle: document.getElementById("autoRunToggle"),
+      autoRunInterval: document.getElementById("autoRunInterval"),
+      stopAutoBtn: document.getElementById("stopAutoBtn"),
+      accountSummary: document.getElementById("accountSummary"),
+      positionsTable: document.getElementById("positionsTable"),
+      resultPanel: document.getElementById("resultPanel"),
+      deltaBoard: document.getElementById("deltaBoard"),
+    };
+
+    let accountCache = [];
+    let currentAccount = null;
+    let lastPositionsSnapshot = null;
+    let isRunning = false;
+    let currentExpertPayload = null;
+    const markerCache = new Map();
+    const runBtn = document.getElementById("runExpertBtn");
+    const AUTH_KEY = "xtrader.expert.auth.v1";
+    const EXEC_KEY = "xtrader.expert.execute.v1";
+    const EXPERT_CACHE_KEY = "xtrader.expert.cache.v1";
+    const AUTO_RUN_KEY = "xtrader.expert.auto.v1";
+    const AUTO_RUN_INTERVAL_KEY = "xtrader.expert.auto.interval.v1";
+    let autoRunTimer = null;
+
+    function money(v) {
+      if (v === null || v === undefined || v === "") return "--";
+      const num = Number(v);
+      if (Number.isNaN(num)) return "--";
+      return num.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    }
+
+    function numberOrZero(value) {
+      const num = Number(value);
+      return Number.isNaN(num) ? 0 : num;
+    }
+
+    function calcPositionsCost(positions) {
+      return (positions || []).reduce((sum, pos) => {
+        const shares = numberOrZero(pos.shares);
+        const avgCost = numberOrZero(pos.avg_cost_cny);
+        return sum + (shares * avgCost);
+      }, 0);
+    }
+
+    function calcUnrealizedPnl(positions) {
+      return (positions || []).reduce((sum, pos) => sum + numberOrZero(pos.unrealized_pnl_cny), 0);
+    }
+
+    function calcTotalAssets(detail) {
+      const cash = numberOrZero(detail?.cash_cny);
+      const positions = detail?.positions || [];
+      return cash + calcPositionsCost(positions) + calcUnrealizedPnl(positions);
+    }
+
+    function escapeHtml(str) {
+      return String(str || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function renderAccountSelect() {
+      els.accountSelect.innerHTML = "";
+      accountCache.forEach((acc) => {
+        const opt = document.createElement("option");
+        opt.value = acc.account_id;
+        opt.textContent = acc.account_id;
+        els.accountSelect.appendChild(opt);
+      });
+      if (accountCache.length) {
+        els.accountSelect.value = accountCache[0].account_id;
+        loadAccountDetail(accountCache[0].account_id);
+      } else {
+        const opt = document.createElement("option");
+        opt.value = "";
+        opt.textContent = "No accounts found";
+        els.accountSelect.appendChild(opt);
+      }
+    }
+
+    function renderPositions(positions = []) {
+      els.positionsTable.innerHTML = "";
+      if (!positions.length) {
+        const row = document.createElement("tr");
+        row.innerHTML = "<td colspan='4' class='muted'>No positions</td>";
+        els.positionsTable.appendChild(row);
+        return;
+      }
+      positions.forEach((pos) => {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${pos.symbol}</td>
+          <td>${pos.shares}</td>
+          <td>${money(pos.avg_cost_cny)}</td>
+          <td style="color:${(Number(pos.unrealized_pnl_cny) || 0) >= 0 ? '#1c3c34' : '#7a1a1a'}">${money(pos.unrealized_pnl_cny)}</td>
+        `;
+        els.positionsTable.appendChild(row);
+      });
+    }
+
+    function renderAccountSummary(detail) {
+      if (!detail) {
+        els.accountSummary.textContent = "Select an account to see positions.";
+        renderPositions([]);
+        return;
+      }
+      const totalAssets = calcTotalAssets(detail);
+      els.accountSummary.innerHTML = `
+        <div class="row">
+          <div class="card">
+            <div class="kicker">Account ID</div>
+            <div class="value">${detail.account_id}</div>
+          </div>
+          <div class="card">
+            <div class="kicker">Cash</div>
+            <div class="value">${money(detail.cash_cny)} CNY</div>
+          </div>
+          <div class="card">
+            <div class="kicker">Total Assets</div>
+            <div class="value">${money(totalAssets)} CNY</div>
+          </div>
+          <div class="card">
+            <div class="kicker">Positions</div>
+            <div class="value">${detail.positions ? detail.positions.length : 0}</div>
+          </div>
+        </div>
+      `;
+      renderPositions(detail.positions || []);
+    }
+
+    function snapshotPositions(positions) {
+      const map = new Map();
+      (positions || []).forEach((p) => {
+        map.set(String(p.symbol || ""), Number(p.shares || 0));
+      });
+      return map;
+    }
+
+    function renderShareDeltas(prevMap, nextMap) {
+      if (!els.deltaBoard) return;
+      if (!prevMap || !nextMap) {
+        els.deltaBoard.innerHTML = "<div class='kicker'>Shares change</div><div class='muted'>No changes yet.</div>";
+        return;
+      }
+      const symbols = new Set([...prevMap.keys(), ...nextMap.keys()]);
+      const rows = [];
+      symbols.forEach((sym) => {
+        const before = prevMap.get(sym) || 0;
+        const after = nextMap.get(sym) || 0;
+        const delta = after - before;
+        if (delta !== 0) {
+          rows.push({ sym, before, after, delta });
+        }
+      });
+      if (!rows.length) {
+        els.deltaBoard.innerHTML = "<div class='kicker'>Shares change</div><div class='muted'>No changes yet.</div>";
+        return;
+      }
+      els.deltaBoard.innerHTML = [
+        "<div class='kicker'>Shares change</div>",
+        ...rows.map((r) => `
+          <div class="deltaRow">
+            <strong>${escapeHtml(r.sym)}</strong>
+            <span>${r.before} → ${r.after} (${r.delta > 0 ? "+" : ""}${r.delta})</span>
+          </div>
+        `),
+      ].join("");
+    }
+
+    function buildSymbolBlock(sym, idx) {
+      const strategyCards = (sym.strategy || []).map((plan) => {
+        return `
+          <div class="card">
+            <div class="kicker">${plan.timeframe} bias</div>
+            <div class="badge-action ${plan.action_bias}">${plan.action_bias}</div>
+            <div class="muted">${escapeHtml(plan.summary)}</div>
+            <div class="muted">Close: ${money(plan.last_close_cny)} · Δ ${plan.change_pct === null ? "--" : plan.change_pct.toFixed(2) + "%"}</div>
+          </div>
+        `;
+      }).join("");
+
+      const newsList = (sym.news || []).map((n) => {
+        const headline = escapeHtml(n.title || "Untitled");
+        const when = n.published_at ? ` · ${escapeHtml(n.published_at)}` : "";
+        return `<div class="news-item">${headline}${when}</div>`;
+      }).join("") || "<div class='muted'>No news returned.</div>";
+
+      const realtime = sym.realtime || {};
+      const actionClass = sym.overall_action ? sym.overall_action.toLowerCase() : "hold";
+      const execution = sym.execution ? `<div class='muted'>Execution: ${escapeHtml(sym.execution.message || "sent")}</div>` : "";
+      const chartId = `candle_${idx}`;
+      const historyId = `history_${idx}`;
+
+      return `
+        <div class="expert-card" data-symbol="${escapeHtml(sym.symbol)}">
+          <div class="expert-head">
+            <div class="title">
+              <span>${sym.symbol}</span>
+              <span class="badge-action ${actionClass}">${sym.overall_action}</span>
+            </div>
+            <span class="chev">▾</span>
+          </div>
+          <div class="expert-body">
+            <div class="muted">${escapeHtml(sym.overall_reason)}</div>
+            <div class="row" style="margin-top:8px;">
+              <div class="pill">Shares: ${sym.shares}</div>
+              <div class="pill">Suggested lots: ${sym.suggested_lots ?? "--"}</div>
+              <div class="pill">Realtime: ${money(realtime.last_price_cny)}</div>
+              <div class="pill">Amount: ${money(realtime.amount)}</div>
+            </div>
+              <div class="chartWrap" style="position: relative;">
+                <div class="chartTabs" data-symbol="${escapeHtml(sym.symbol)}" data-canvas="${chartId}">
+                  <button type="button" class="active" data-period="minute">分时</button>
+                  <button type="button" data-period="daily">日</button>
+                  <button type="button" data-period="weekly">周</button>
+                  <button type="button" data-period="monthly">月</button>
+                </div>
+                <div class="chartLegend">
+                  <span><span class="dot" style="background:rgba(42,110,232,0.9)"></span>MA5</span>
+                  <span><span class="dot" style="background:rgba(246,183,60,0.9)"></span>MA10</span>
+                  <span><span class="dot" style="background:rgba(34,178,126,0.9)"></span>MA20</span>
+                </div>
+                <canvas class="candle" id="${chartId}"></canvas>
+                <div class="candleTip"></div>
+              </div>
+            <div class="timeframe-grid" style="margin-top:10px;">${strategyCards}</div>
+            <div class="card" style="margin-top:10px;">
+              <div class="kicker">Realtime news</div>
+              <div class="news-list">${newsList}</div>
+            </div>
+            <div class="card" style="margin-top:10px;">
+              <div class="kicker">Decision history</div>
+              <button class="btn" data-history-toggle="${historyId}" style="display:none;">Show more</button>
+              <div class="historyList" id="${historyId}"><div class="muted">Loading history...</div></div>
+            </div>
+            ${execution}
+          </div>
+        </div>
+      `;
+    }
+
+    function wireSymbolInteractions(rootEl) {
+      rootEl.querySelectorAll(".expert-card .expert-head").forEach((head) => {
+        head.addEventListener("click", () => {
+          const card = head.closest(".expert-card");
+          if (card) card.classList.toggle("folded");
+        });
+      });
+
+      rootEl.querySelectorAll(".chartTabs").forEach((tabs) => {
+        tabs.querySelectorAll("button").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const period = btn.getAttribute("data-period") || "minute";
+            const symbol = tabs.getAttribute("data-symbol");
+            const canvasId = tabs.getAttribute("data-canvas");
+            if (!symbol || !canvasId) return;
+            tabs.querySelectorAll("button").forEach((b) => b.classList.remove("active"));
+            btn.classList.add("active");
+            renderCandlesForSymbol(symbol, canvasId, period).catch(() => null);
+          });
+        });
+      });
+
+      rootEl.querySelectorAll(".historyList").forEach((container) => {
+        const historyId = container.getAttribute("id");
+        const toggleBtn = container.parentElement?.querySelector("[data-history-toggle]");
+        const card = container.closest(".expert-card");
+        const symbol = card?.getAttribute("data-symbol");
+        const canvasId = card?.querySelector("canvas.candle")?.getAttribute("id");
+        if (!historyId || !symbol) return;
+        const nowTs = shanghaiNowString();
+        const accountId = els.accountSelect.value || "default";
+        api(`/trade_history/${encodeURIComponent(symbol)}?now_ts=${encodeURIComponent(nowTs)}&account_id=${encodeURIComponent(accountId)}&limit=30`)
+          .then((res) => {
+            const records = (res.records || []).filter((r) => r.status === "EXPERT");
+            if (!records.length) {
+              container.innerHTML = "<div class='muted'>No expert decisions yet.</div>";
+              return;
+            }
+            markerCache.set(symbol, records.map((r) => ({ ts: r.decision_ts, action: r.action })));
+            const rows = records.map((r, idx) => `
+              <div class="historyItem${idx >= 5 ? " folded" : ""}">
+                <div class="historyMeta">
+                  <span class="pill">${r.action || "HOLD"}</span>
+                  <span class="muted">${escapeHtml(r.decision_ts || "")}</span>
+                  <span class="muted">Lots: ${r.suggested_lots ?? "--"}</span>
+                </div>
+                <div class="muted">${escapeHtml(r.reason || r.message || "")}</div>
+              </div>
+            `).join("");
+            container.innerHTML = rows;
+            if (canvasId) {
+              const period = activePeriodForCanvas(canvasId);
+              renderCandlesForSymbol(symbol, canvasId, period).catch(() => null);
+            }
+            if (toggleBtn) {
+              if (records.length > 5) {
+                toggleBtn.style.display = "inline-flex";
+                let expanded = false;
+                toggleBtn.textContent = "Show more";
+                toggleBtn.onclick = () => {
+                  expanded = !expanded;
+                  container.querySelectorAll(".historyItem").forEach((el, idx) => {
+                    if (idx >= 5) el.classList.toggle("folded", !expanded);
+                  });
+                  toggleBtn.textContent = expanded ? "Show less" : "Show more";
+                };
+              } else {
+                toggleBtn.style.display = "none";
+              }
+            }
+          })
+          .catch((err) => {
+            container.innerHTML = `<div class='muted'>Failed to load history: ${escapeHtml(err.message || "error")}</div>`;
+          });
+      });
+    }
+
+    function activePeriodForCanvas(canvasId) {
+      const tabs = document.querySelector(`.chartTabs[data-canvas='${canvasId}']`);
+      if (!tabs) return "minute";
+      const active = tabs.querySelector("button.active");
+      return active?.getAttribute("data-period") || "minute";
+    }
+
+    function renderSymbolDetail(idx) {
+      if (!currentExpertPayload || !currentExpertPayload.symbols || !currentExpertPayload.symbols.length) return;
+      const sym = currentExpertPayload.symbols[idx];
+      const detail = document.getElementById("symbolDetail");
+      if (!detail) return;
+      detail.innerHTML = buildSymbolBlock(sym, idx);
+      wireSymbolInteractions(detail);
+      renderCandlesForSymbol(sym.symbol, `candle_${idx}`, "minute").catch(() => null);
+    }
+
+    function renderResult(payload) {
+      if (!payload || !payload.symbols || !payload.symbols.length) {
+        els.resultPanel.innerHTML = "<div class='kicker'>No analysis yet</div><div class='muted'>Run the expert to see multi-horizon strategy guidance.</div>";
+        return;
+      }
+
+      currentExpertPayload = payload;
+      const warnings = (payload.warnings || []).map((w) => `<div class='muted'>Warning: ${escapeHtml(w)}</div>`).join("");
+      const tabs = payload.symbols.map((sym, idx) => `
+        <button type="button" data-tab-idx="${idx}" class="${idx === 0 ? "active" : ""}">${escapeHtml(sym.symbol)}</button>
+      `).join("");
+
+      els.resultPanel.innerHTML = `
+        <div class="muted">As of ${escapeHtml(payload.asof || "")}</div>
+        ${warnings}
+        <div class="symbolTabs" id="symbolTabs">${tabs}</div>
+        <div id="symbolDetail" class="symbol-grid"></div>
+      `;
+
+      const tabsEl = document.getElementById("symbolTabs");
+      if (tabsEl) {
+        tabsEl.querySelectorAll("button").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const idx = Number(btn.getAttribute("data-tab-idx") || "0");
+            tabsEl.querySelectorAll("button").forEach((b) => b.classList.remove("active"));
+            btn.classList.add("active");
+            renderSymbolDetail(idx);
+          });
+        });
+      }
+
+      renderSymbolDetail(0);
+    }
+
+    function setRunning(state) {
+      isRunning = state;
+      if (isRunning) {
+        runBtn.textContent = "Running...";
+        runBtn.setAttribute("disabled", "disabled");
+        if (els.autoRunToggle.checked) {
+          els.stopAutoBtn.style.display = "inline-flex";
+        }
+      } else {
+        runBtn.textContent = "Run expert";
+        runBtn.removeAttribute("disabled");
+        if (!els.autoRunToggle.checked) {
+          els.stopAutoBtn.style.display = "none";
+        }
+      }
+    }
+
+    function formatYmd(date) {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, "0");
+      const d = String(date.getDate()).padStart(2, "0");
+      return `${y}${m}${d}`;
+    }
+
+    function buildOhlcFromBars(bars) {
+      return (bars || []).map((b) => ({
+        t: new Date(b.ts).getTime(),
+        o: Number(b.open),
+        h: Number(b.high),
+        l: Number(b.low),
+        c: Number(b.close),
+      })).filter((b) => [b.t, b.o, b.h, b.l, b.c].every((v) => Number.isFinite(v)));
+    }
+
+    function drawCandles(canvas, ohlc, markers = []) {
+      const ctx = canvas.getContext("2d");
+      if (!ctx || !ohlc || !ohlc.length) return;
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      const pad = 26;
+      const w = rect.width;
+      const h = rect.height;
+      const innerW = w - pad * 2;
+      const innerH = h - pad * 2;
+
+      const highs = ohlc.map((b) => b.h);
+      const lows = ohlc.map((b) => b.l);
+      const maxV = Math.max(...highs);
+      const minV = Math.min(...lows);
+      const span = maxV - minV || 1;
+
+      const step = innerW / Math.max(ohlc.length, 1);
+      const bodyW = Math.max(2, step * 0.55);
+
+      ctx.clearRect(0, 0, w, h);
+      ctx.lineWidth = 1;
+
+      // grid + axes labels
+      ctx.strokeStyle = "rgba(12,17,24,0.08)";
+      ctx.fillStyle = "rgba(12,17,24,0.6)";
+      ctx.font = "10px Georgia, serif";
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+      for (let i = 0; i <= 4; i++) {
+        const y = pad + (innerH / 4) * i;
+        ctx.beginPath();
+        ctx.moveTo(pad, y);
+        ctx.lineTo(w - pad, y);
+        ctx.stroke();
+        const v = maxV - (span / 4) * i;
+        ctx.fillText(v.toFixed(2), pad - 4, y);
+      }
+
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      const xSteps = Math.min(4, Math.max(ohlc.length - 1, 1));
+      for (let i = 0; i <= xSteps; i++) {
+        const idx = Math.round((ohlc.length - 1) * (i / xSteps));
+        const x = pad + step * idx + step / 2;
+        const dt = new Date(ohlc[idx].t);
+        const label = `${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`;
+        ctx.fillText(label, x, h - pad + 6);
+      }
+
+      ohlc.forEach((bar, i) => {
+        const x = pad + i * step + step / 2;
+        const yHigh = pad + innerH * (1 - (bar.h - minV) / span);
+        const yLow = pad + innerH * (1 - (bar.l - minV) / span);
+        const yOpen = pad + innerH * (1 - (bar.o - minV) / span);
+        const yClose = pad + innerH * (1 - (bar.c - minV) / span);
+        const up = bar.c >= bar.o;
+        ctx.strokeStyle = up ? "rgba(46,107,95,0.9)" : "rgba(222,90,74,0.9)";
+        ctx.fillStyle = up ? "rgba(46,107,95,0.45)" : "rgba(222,90,74,0.45)";
+        ctx.beginPath();
+        ctx.moveTo(x, yHigh);
+        ctx.lineTo(x, yLow);
+        ctx.stroke();
+        const bodyY = Math.min(yOpen, yClose);
+        const bodyH = Math.max(2, Math.abs(yClose - yOpen));
+        ctx.fillRect(x - bodyW / 2, bodyY, bodyW, bodyH);
+      });
+
+      // markers
+      const markerPoints = [];
+      if (markers && markers.length) {
+        markers.forEach((m) => {
+          const idx = m.idx;
+          if (idx < 0 || idx >= ohlc.length) return;
+          const bar = ohlc[idx];
+          const x = pad + idx * step + step / 2;
+          const yHigh = pad + innerH * (1 - (bar.h - minV) / span);
+          const yLow = pad + innerH * (1 - (bar.l - minV) / span);
+          const isBuy = String(m.action || "").toUpperCase() === "BUY";
+          ctx.fillStyle = isBuy ? "rgba(46,107,95,0.95)" : "rgba(222,90,74,0.95)";
+          ctx.strokeStyle = ctx.fillStyle;
+          ctx.beginPath();
+          if (isBuy) {
+            ctx.moveTo(x, yHigh - 10);
+            ctx.lineTo(x - 6, yHigh - 2);
+            ctx.lineTo(x + 6, yHigh - 2);
+          } else {
+            ctx.moveTo(x, yLow + 10);
+            ctx.lineTo(x - 6, yLow + 2);
+            ctx.lineTo(x + 6, yLow + 2);
+          }
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = "#0c1118";
+          ctx.font = "10px Georgia, serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = isBuy ? "bottom" : "top";
+          ctx.fillText(isBuy ? "B" : "S", x, isBuy ? yHigh - 12 : yLow + 12);
+          markerPoints.push({
+            x,
+            y: isBuy ? yHigh - 10 : yLow + 10,
+            action: isBuy ? "BUY" : "SELL",
+            ts: m.ts,
+            price: bar.c,
+          });
+        });
+      }
+      canvas.__markerPoints = markerPoints;
+
+      // MA lines
+      const maColors = { 5: "rgba(42,110,232,0.9)", 10: "rgba(246,183,60,0.9)", 20: "rgba(34,178,126,0.9)" };
+      [5, 10, 20].forEach((win) => {
+        ctx.strokeStyle = maColors[win];
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        let started = false;
+        for (let i = 0; i < ohlc.length; i++) {
+          if (i < win - 1) continue;
+          const slice = ohlc.slice(i - win + 1, i + 1);
+          const avg = slice.reduce((s, b) => s + b.c, 0) / win;
+          const x = pad + i * step + step / 2;
+          const y = pad + innerH * (1 - (avg - minV) / span);
+          if (!started) {
+            ctx.moveTo(x, y);
+            started = true;
+          } else {
+            ctx.lineTo(x, y);
+          }
+        }
+        ctx.stroke();
+      });
+    }
+
+    function dateKey(dt) {
+      const fmt = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Shanghai",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      });
+      return fmt.format(dt);
+    }
+
+    function mapMarkersToBars(ohlc, markers, period) {
+      if (!markers || !markers.length) return [];
+      if (period === "minute") {
+        return markers.map((m) => {
+          const t = new Date(m.ts).getTime();
+          let bestIdx = 0;
+          let bestDiff = Infinity;
+          for (let i = 0; i < ohlc.length; i++) {
+            const diff = Math.abs(ohlc[i].t - t);
+            if (diff < bestDiff) {
+              bestDiff = diff;
+              bestIdx = i;
+            }
+          }
+          return { idx: bestIdx, action: m.action, ts: m.ts };
+        });
+      }
+      const byDate = new Map();
+      ohlc.forEach((b, i) => {
+        const k = dateKey(new Date(b.t));
+        if (!byDate.has(k)) byDate.set(k, i);
+      });
+      return markers.map((m) => {
+        const k = dateKey(new Date(m.ts));
+        const idx = byDate.get(k);
+        return { idx: idx ?? -1, action: m.action, ts: m.ts };
+      }).filter((m) => m.idx >= 0);
+    }
+
+    function bindCandleTooltip(canvas, tipEl) {
+      if (!canvas || !tipEl) return;
+      if (canvas.__tipBound) return;
+      canvas.__tipBound = true;
+      canvas.addEventListener("mousemove", (e) => {
+        const points = canvas.__markerPoints || [];
+        if (!points.length) {
+          tipEl.style.display = "none";
+          return;
+        }
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        let closest = null;
+        let best = 9999;
+        points.forEach((p) => {
+          const dx = x - p.x;
+          const dy = y - p.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < best && dist < 12) {
+            best = dist;
+            closest = p;
+          }
+        });
+        if (!closest) {
+          tipEl.style.display = "none";
+          return;
+        }
+        tipEl.style.display = "block";
+        const dt = closest.ts ? new Date(closest.ts) : null;
+        const time = dt ? dt.toLocaleString() : "";
+        tipEl.textContent = `${closest.action} @ ${closest.price?.toFixed(2) || "--"} • ${time}`;
+        tipEl.style.left = `${x}px`;
+        tipEl.style.top = `${y}px`;
+      });
+      canvas.addEventListener("mouseleave", () => {
+        tipEl.style.display = "none";
+      });
+    }
+
+    function shanghaiDateParts() {
+      const fmt = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Shanghai",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      });
+      const parts = fmt.formatToParts(new Date());
+      const get = (type) => parts.find((p) => p.type === type)?.value || "";
+      return { y: get("year"), m: get("month"), d: get("day") };
+    }
+
+    function periodStartDate(daysBack) {
+      const d = new Date();
+      d.setDate(d.getDate() - daysBack);
+      return d;
+    }
+
+    function formatYmdDash(date) {
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, "0");
+      const d = String(date.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
+    }
+
+    async function renderCandlesForSymbol(symbol, canvasId, period = "minute", markers = null) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+      const wrap = canvas.closest(".chartWrap");
+      if (wrap) {
+        wrap.setAttribute("data-error", "");
+      }
+      let payload = null;
+      if (period === "minute") {
+        const { y, m, d } = shanghaiDateParts();
+        const startStr = `${y}-${m}-${d} 09:30:00`;
+        const endStr = `${y}-${m}-${d} 15:00:00`;
+        try {
+          payload = await api(`/api/stock/bars?symbol=${encodeURIComponent(symbol)}&start=${encodeURIComponent(startStr)}&end=${encodeURIComponent(endStr)}&freq=1`);
+        } catch (err) {
+          if (wrap) {
+            wrap.setAttribute("data-error", "rate");
+            wrap.insertAdjacentHTML("beforeend", `<div class="muted">Realtime bars unavailable (provider limit). Try again later.</div>`);
+          }
+          return;
+        }
+      } else {
+        const lookbackDays = Number(els.lookbackInput.value || 540);
+        const end = new Date();
+        const start = periodStartDate(lookbackDays);
+        const startStr = formatYmdDash(start);
+        const endStr = formatYmdDash(end);
+        try {
+          payload = await api(`/api/stock/period?symbol=${encodeURIComponent(symbol)}&start=${encodeURIComponent(startStr)}&end=${encodeURIComponent(endStr)}&period=${encodeURIComponent(period)}&adjust=qfq`);
+        } catch (err) {
+          if (wrap) {
+            wrap.setAttribute("data-error", "rate");
+            wrap.insertAdjacentHTML("beforeend", `<div class="muted">Historical bars unavailable (provider limit). Try again later.</div>`);
+          }
+          return;
+        }
+      }
+      const bars = payload?.bars || [];
+      const ohlc = buildOhlcFromBars(bars);
+      const cachedMarkers = markers || markerCache.get(symbol) || [];
+      const mapped = mapMarkersToBars(ohlc, cachedMarkers, period);
+      drawCandles(canvas, ohlc, mapped);
+      const tipEl = canvas.parentElement?.querySelector(".candleTip");
+      bindCandleTooltip(canvas, tipEl);
+    }
+
+    function loadExpertCache() {
+      try {
+        const cached = JSON.parse(localStorage.getItem(EXPERT_CACHE_KEY) || "null");
+        if (cached && cached.payload) {
+          renderResult(cached.payload);
+          cached.payload.symbols.forEach((sym, idx) => {
+            renderCandlesForSymbol(sym.symbol, `candle_${idx}`, "minute").catch(() => null);
+          });
+        }
+      } catch {
+        // ignore cache errors
+      }
+    }
+
+    function saveExpertCache(payload) {
+      if (!payload) return;
+      localStorage.setItem(EXPERT_CACHE_KEY, JSON.stringify({
+        saved_at: Date.now(),
+        payload,
+      }));
+    }
+
+    async function loadAccounts() {
+      const data = await api("/api/accounts");
+      accountCache = data.items || [];
+      renderAccountSelect();
+    }
+
+    async function loadAccountDetail(accountId) {
+      if (!accountId) return;
+      if (!lastPositionsSnapshot) {
+        lastPositionsSnapshot = snapshotPositions(currentAccount?.positions || []);
+      }
+      const detail = await api(`/api/accounts/${encodeURIComponent(accountId)}`);
+      currentAccount = detail;
+      renderAccountSummary(detail);
+      const nextSnapshot = snapshotPositions(detail.positions || []);
+      if (lastPositionsSnapshot) {
+        renderShareDeltas(lastPositionsSnapshot, nextSnapshot);
+      }
+      lastPositionsSnapshot = nextSnapshot;
+    }
+
+    function todayKey() {
+      return new Date().toISOString().slice(0, 10);
+    }
+
+    function shanghaiNowString() {
+      const fmt = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Shanghai",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      });
+      const parts = fmt.formatToParts(new Date());
+      const get = (type) => parts.find((p) => p.type === type)?.value || "";
+      return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")}`;
+    }
+
+    function hasRecentAuthorization() {
+      const saved = localStorage.getItem(AUTH_KEY);
+      return saved === todayKey();
+    }
+
+    function openAuthModal() {
+      els.authorizeToggle.checked = false;
+      const savedExecute = localStorage.getItem(EXEC_KEY);
+      els.executeToggle.checked = savedExecute === "true";
+      els.authModal.classList.add("show");
+    }
+
+    function closeAuthModal() {
+      els.authModal.classList.remove("show");
+    }
+
+    async function runExpert(authorization, execute) {
+      if (isRunning) return;
+      const accountId = els.accountSelect.value;
+      if (!accountId) {
+        alert("Please select an account.");
+        return;
+      }
+
+      const payload = {
+        account_id: accountId,
+        lookback_days: Number(els.lookbackInput.value || 540),
+        adjust: els.adjustSelect.value,
+        authorize_trade: Boolean(authorization),
+        execute: Boolean(execute),
+        order_lots: Number(els.orderLots.value || 1),
+      };
+
+      setRunning(true);
+      try {
+        const result = await api("/api/agent/stock-expert", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+        renderResult(result);
+        saveExpertCache(result);
+        if (accountId) {
+          await loadAccountDetail(accountId);
+        }
+      } finally {
+        setRunning(false);
+      }
+    }
+
+    function getAutoIntervalMs() {
+      const mins = Number(localStorage.getItem(AUTO_RUN_INTERVAL_KEY) || els.autoRunInterval.value || 5);
+      return Math.max(1, mins) * 60 * 1000;
+    }
+
+    function clearAutoRun() {
+      if (autoRunTimer) {
+        clearInterval(autoRunTimer);
+        autoRunTimer = null;
+      }
+      els.stopAutoBtn.style.display = "none";
+    }
+
+    function startAutoRun() {
+      clearAutoRun();
+      const execute = localStorage.getItem(EXEC_KEY) === "true";
+      if (!hasRecentAuthorization() || !execute) {
+        return;
+      }
+      els.stopAutoBtn.style.display = "inline-flex";
+      runBtn.textContent = "Running...";
+      runBtn.setAttribute("disabled", "disabled");
+      autoRunTimer = setInterval(() => {
+        runExpert(true, execute).catch(() => null);
+      }, getAutoIntervalMs());
+      runExpert(true, execute).catch(() => null);
+    }
+
+    async function loadUser() {
+      try {
+        await api("/auth/me");
+      } catch (err) {
+        // ignore
+      }
+    }
+
+    document.getElementById("logoutBtn").addEventListener("click", async () => {
+      try {
+        await api("/auth/logout", { method: "POST" });
+      } catch (err) {
+        alert(err.message);
+        return;
+      }
+      window.location.href = "/login";
+    });
+
+    els.accountSelect.addEventListener("change", (e) => loadAccountDetail(e.target.value).catch((err) => alert(err.message)));
+    runBtn.addEventListener("click", () => {
+      if (hasRecentAuthorization()) {
+        const execute = localStorage.getItem(EXEC_KEY) === "true";
+        runExpert(true, execute).catch((err) => alert(err.message));
+        return;
+      }
+      openAuthModal();
+    });
+    els.authConfirmBtn.addEventListener("click", () => {
+      if (!els.authorizeToggle.checked) {
+        alert("Please authorize before proceeding.");
+        return;
+      }
+      localStorage.setItem(AUTH_KEY, todayKey());
+      localStorage.setItem(EXEC_KEY, els.executeToggle.checked ? "true" : "false");
+      closeAuthModal();
+      runExpert(true, els.executeToggle.checked).catch((err) => alert(err.message));
+      if (els.autoRunToggle.checked) {
+        startAutoRun();
+      }
+    });
+    els.authCancelBtn.addEventListener("click", () => closeAuthModal());
+    const refreshAccountsLoop = () => loadAccounts().catch(() => null);
+    els.autoRunToggle.addEventListener("change", (e) => {
+      const enabled = Boolean(e.target.checked);
+      localStorage.setItem(AUTO_RUN_KEY, enabled ? "true" : "false");
+      if (enabled) {
+        startAutoRun();
+      } else {
+        clearAutoRun();
+      }
+    });
+    els.autoRunInterval.addEventListener("change", (e) => {
+      localStorage.setItem(AUTO_RUN_INTERVAL_KEY, String(e.target.value || "5"));
+      if (els.autoRunToggle.checked) startAutoRun();
+    });
+    els.stopAutoBtn.addEventListener("click", () => {
+      els.autoRunToggle.checked = false;
+      localStorage.setItem(AUTO_RUN_KEY, "false");
+      clearAutoRun();
+      setRunning(false);
+    });
+
+    loadUser();
+    loadExpertCache();
+    loadAccounts().catch((err) => alert(err.message));
+    setInterval(refreshAccountsLoop, 60000);
+    els.autoRunToggle.checked = localStorage.getItem(AUTO_RUN_KEY) === "true";
+    const savedInterval = localStorage.getItem(AUTO_RUN_INTERVAL_KEY);
+    if (savedInterval) els.autoRunInterval.value = savedInterval;
+    if (els.autoRunToggle.checked) startAutoRun();
+    if (els.deltaBoard) {
+      els.deltaBoard.innerHTML = "<div class='kicker'>Shares change</div><div class='muted'>No changes yet.</div>";
+    }
+  </script>
+</body>
+</html>

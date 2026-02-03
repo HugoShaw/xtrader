@@ -27,7 +27,15 @@ from app.services.broker import PaperBroker
 from app.services.strategy import StrategyEngine
 from app.services.trade_history_db import TradeHistoryDB
 from app.services.backtest import BacktestParams, run_backtest, build_report_html
-from app.services.stock_api import fetch_cn_minute_bars, fetch_cn_daily_bars, bars_to_payload
+from app.services.stock_api import fetch_cn_minute_bars, fetch_cn_daily_bars, fetch_cn_period_bars, bars_to_payload
+from app.services.stock_expert import (
+    build_symbol_plans,
+    combine_action,
+    fetch_news,
+    fetch_realtime_quote,
+    suggest_order_shares,
+    llm_decision_schema_hint,
+)
 from app.services.auth import (
     AuthenticatedUser,
     clear_session_cookie,
@@ -39,10 +47,21 @@ from app.services.auth import (
 )
 
 from app.models_llm import LLMChatRequest, LLMChatResponse, ChatMessage
-from app.models import TradingContextIn, AccountState
+from app.models import TradingContextIn, AccountState, TradeRequest
 from app.models_auth import AuthStatus, LoginRequest, SignupRequest, UserPublic
 from app.models_admin import AdminUserCreate, AdminUserUpdate, AdminUserList, ApiUsageSummary
-from app.models_agent import StockStrategyRequest, StockStrategyAdvice, StockStrategyLLM
+from app.models_agent import (
+    StockStrategyRequest,
+    StockStrategyAdvice,
+    StockStrategyLLM,
+    StockExpertRequest,
+    StockExpertAdvice,
+    ExpertTimeframeAdvice,
+    ExpertNewsItem,
+    ExpertRealtimeQuote,
+    StockExpertSymbolAdvice,
+    StockExpertLLM,
+)
 from app.models_account import (
     TradeAccountCreate,
     TradeAccountUpdate,
@@ -312,6 +331,14 @@ async def analyst_page(user: AuthenticatedUser = Depends(require_user)):
     html_path = STATIC_DIR / "analyst.html"
     if not html_path.exists():
         raise HTTPException(status_code=404, detail="analyst.html not found in /static")
+    return html_path.read_text(encoding="utf-8")
+
+
+@app.get("/agent/expert", response_class=HTMLResponse, tags=["agent-ui"])
+async def expert_page(user: AuthenticatedUser = Depends(require_user)):
+    html_path = STATIC_DIR / "stock_expert.html"
+    if not html_path.exists():
+        raise HTTPException(status_code=404, detail="stock_expert.html not found in /static")
     return html_path.read_text(encoding="utf-8")
 
 
@@ -759,6 +786,316 @@ async def agent_stock_strategy(
     )
 
 
+@app.post("/api/agent/stock-expert", response_model=StockExpertAdvice, tags=["agent"])
+async def agent_stock_expert(
+    req: StockExpertRequest,
+    user: AuthenticatedUser = Depends(require_user),
+):
+    t0 = time.perf_counter()
+    if req.execute and not req.authorize_trade:
+        raise HTTPException(status_code=403, detail="authorization required to execute trades")
+
+    logger.debug(
+        "expert_start | user=%s account_id=%s execute=%s authorize=%s lookback_days=%s adjust=%s",
+        str(user.username),
+        str(req.account_id),
+        bool(req.execute),
+        bool(req.authorize_trade),
+        int(req.lookback_days),
+        str(req.adjust),
+    )
+
+    async with session_scope(app.state.session_factory) as s:
+        repo = TradeAccountRepo(s)
+        acc = await repo.get_account(user_id=int(user.id), account_id=str(req.account_id))
+        if not acc:
+            raise HTTPException(status_code=404, detail="account not found")
+        positions = await repo.list_positions(account_pk=acc.id, user_id=int(user.id))
+
+    symbols = [str(p.symbol) for p in positions]
+    if not symbols:
+        raise HTTPException(status_code=400, detail="no positions found in account")
+
+    warnings: list[str] = []
+    if len(symbols) > int(req.max_symbols):
+        warnings.append(f"symbol count capped at {req.max_symbols}")
+        symbols = symbols[: int(req.max_symbols)]
+
+    now = now_shanghai()
+    start_day = (now - timedelta(days=int(req.lookback_days))).strftime("%Y%m%d")
+    end_day = now.strftime("%Y%m%d")
+
+    broker = app.state.broker
+    trade_history_db: TradeHistoryDB = app.state.trade_history_db
+    cash_cny_state = float(acc.cash_cny or 0.0)
+    results: list[StockExpertSymbolAdvice] = []
+    for pos in positions:
+        sym_t0 = time.perf_counter()
+        symbol = str(pos.symbol)
+        if symbol not in symbols:
+            continue
+
+        try:
+            plans, last_close = await run_in_threadpool(
+                build_symbol_plans,
+                symbol=symbol,
+                start_day=start_day,
+                end_day=end_day,
+                adjust=req.adjust,
+            )
+        except Exception as exc:
+            logger.warning("expert_plan_error | symbol=%s err=%s", symbol, exc)
+            warnings.append(f"{symbol}: failed to load historical data")
+            plans = []
+            last_close = None
+
+        realtime = await run_in_threadpool(fetch_realtime_quote, symbol)
+        news_items = await run_in_threadpool(fetch_news, symbol)
+
+        last_price = None
+        if realtime:
+            last_price = realtime.get("last_price_cny")
+        if last_price is None:
+            last_price = last_close
+
+        plan_items = [
+            ExpertTimeframeAdvice(
+                timeframe=p.timeframe,
+                action_bias=p.action_bias,
+                confidence=p.confidence,
+                summary=p.summary,
+                last_close_cny=p.last_close_cny,
+                change_pct=p.change_pct,
+                short_ma=p.short_ma,
+                long_ma=p.long_ma,
+            )
+            for p in plans
+        ]
+
+        action = "HOLD"
+        reason = "LLM decision pending."
+        suggested_lots = int(req.order_lots)
+        confidence = None
+        risk_notes = None
+        llm: OpenAICompatLLM = app.state.llm
+
+        llm_payload = {
+            "symbol": symbol,
+            "account_status": {
+                "cash_cny": float(cash_cny_state),
+                "shares": int(pos.shares or 0),
+                "avg_cost_cny": float(pos.avg_cost_cny) if pos.avg_cost_cny is not None else None,
+                "unrealized_pnl_cny": float(pos.unrealized_pnl_cny) if pos.unrealized_pnl_cny is not None else None,
+            },
+            "realtime_quote": realtime or {},
+            "news": news_items,
+            "timeframe_strategy": [
+                {
+                    "timeframe": p.timeframe,
+                    "action_bias": p.action_bias,
+                    "confidence": p.confidence,
+                    "summary": p.summary,
+                    "last_close_cny": p.last_close_cny,
+                    "change_pct": p.change_pct,
+                    "short_ma": p.short_ma,
+                    "long_ma": p.long_ma,
+                }
+                for p in plans
+            ],
+        }
+
+        system_prompt = (
+            "You are a stock trading expert. Use the provided multi-timeframe strategy, "
+            "realtime price/amount, news, and account status to decide BUY/SELL/HOLD. "
+            "Return a suggested_lots integer for the trade (0..50) and a concise reason. "
+            "Be risk-aware and do not invent data."
+        )
+        user_prompt = f"Decision input:\\n{llm_payload}"
+
+        try:
+            llm_decision: StockExpertLLM = await llm.chat_json(
+                system_prompt,
+                user_prompt,
+                llm_decision_schema_hint(),
+                model_cls=StockExpertLLM,
+                temperature=0.3,
+            )
+            action = llm_decision.action
+            suggested_lots = int(llm_decision.suggested_lots or 0)
+            confidence = float(llm_decision.confidence) if llm_decision.confidence is not None else None
+            reason = llm_decision.reason
+            if llm_decision.risk_notes:
+                risk_notes = llm_decision.risk_notes
+                reason = f"{reason} ({llm_decision.risk_notes})"
+        except Exception as exc:
+            logger.warning("expert_llm_error | symbol=%s err=%s", symbol, exc)
+            action, reason = combine_action(
+                plans,
+                shares=int(pos.shares or 0),
+                cash_cny=float(cash_cny_state),
+                lot_size=100,
+                last_price_cny=last_price,
+                avg_cost_cny=float(pos.avg_cost_cny) if pos.avg_cost_cny is not None else None,
+                unrealized_pnl_cny=float(pos.unrealized_pnl_cny) if pos.unrealized_pnl_cny is not None else None,
+            )
+
+        suggested_shares = suggest_order_shares(
+            action=action,
+            shares=int(pos.shares or 0),
+            cash_cny=float(cash_cny_state),
+            lot_size=100,
+            last_price_cny=last_price,
+            order_lots=int(suggested_lots),
+        )
+
+        try:
+            await trade_history_db.append_intraday(
+                symbol=symbol,
+                now_ts=fmt_shanghai(now) or now.isoformat(),
+                user_id=int(user.id),
+                account_id=str(acc.account_id),
+                record={
+                    "decision_ts": fmt_shanghai(now) or now.isoformat(),
+                    "user_id": int(user.id),
+                    "username": str(user.username),
+                    "account_id": str(acc.account_id),
+                    "action": action,
+                    "confidence": confidence,
+                    "reason": reason,
+                    "risk_notes": risk_notes,
+                    "lot_size": 100,
+                    "suggested_lots": int(suggested_lots),
+                    "suggested_shares": int(suggested_shares),
+                    "status": "EXPERT",
+                    "ok": True,
+                    "message": "expert_decision",
+                    "executed_price_cny": float(last_price) if last_price is not None else None,
+                },
+            )
+        except Exception as exc:
+            logger.warning("expert_history_save_failed | symbol=%s err=%s", symbol, exc)
+
+        execution = None
+        if req.execute and req.authorize_trade and action in ("BUY", "SELL"):
+            order_shares = suggest_order_shares(
+                action=action,
+                shares=int(pos.shares or 0),
+                cash_cny=float(cash_cny_state),
+                lot_size=100,
+                last_price_cny=last_price,
+                order_lots=int(suggested_lots or req.order_lots),
+            )
+            if order_shares <= 0:
+                reason = f"{reason} (no tradable shares available)"
+            else:
+                try:
+                    trade = await broker.place_order(
+                        TradeRequest(
+                            symbol=symbol,
+                            action=action,
+                            shares=int(order_shares),
+                            lot_size=100,
+                            price_cny=last_price,
+                        )
+                    )
+                    execution = trade.model_dump(mode="json")
+                    if trade.ok:
+                        cash_cny_state += float(trade.cash_delta_cny or 0.0)
+                        new_shares = int(pos.shares or 0)
+                        new_avg_cost = float(pos.avg_cost_cny) if pos.avg_cost_cny is not None else None
+                        if action == "BUY":
+                            fill_price = float(trade.executed_price_cny or last_price or 0.0)
+                            old_cost = (new_avg_cost or 0.0) * new_shares
+                            new_shares += int(order_shares)
+                            if new_shares > 0 and fill_price > 0:
+                                new_avg_cost = (old_cost + fill_price * int(order_shares)) / new_shares
+                        elif action == "SELL":
+                            new_shares = max(0, new_shares - int(order_shares))
+                            if new_shares <= 0:
+                                new_avg_cost = None
+
+                        last_px = float(last_price or 0.0)
+                        unrealized = None
+                        if new_avg_cost is not None and last_px > 0 and new_shares > 0:
+                            unrealized = (last_px - float(new_avg_cost)) * new_shares
+
+                        pos.shares = new_shares
+                        pos.avg_cost_cny = new_avg_cost
+                        pos.unrealized_pnl_cny = unrealized
+
+                        try:
+                            async with session_scope(app.state.session_factory) as s:
+                                repo = TradeAccountRepo(s)
+                                acc_db = await repo.get_account(user_id=int(user.id), account_id=str(acc.account_id))
+                                if acc_db:
+                                    await repo.update_account(
+                                        acc_db,
+                                        name=acc_db.name,
+                                        cash_cny=float(cash_cny_state),
+                                        base_currency=acc_db.base_currency,
+                                    )
+                                    pos_db = await repo.get_position(
+                                        account_pk=acc_db.id,
+                                        user_id=int(user.id),
+                                        symbol=str(symbol),
+                                    )
+                                    if pos_db:
+                                        if new_shares <= 0:
+                                            await repo.delete_position(
+                                                account_pk=acc_db.id,
+                                                user_id=int(user.id),
+                                                symbol=str(symbol),
+                                            )
+                                        else:
+                                            await repo.update_position(
+                                                pos_db,
+                                                shares=new_shares,
+                                                avg_cost_cny=new_avg_cost,
+                                                unrealized_pnl_cny=unrealized,
+                                            )
+                        except Exception as exc:
+                            logger.warning("expert_account_update_failed | symbol=%s err=%s", symbol, exc)
+                except Exception as exc:
+                    warnings.append(f"{symbol}: trade execution failed ({type(exc).__name__})")
+
+        results.append(
+            StockExpertSymbolAdvice(
+                symbol=symbol,
+                shares=int(pos.shares or 0),
+                cash_cny=float(cash_cny_state),
+                strategy=plan_items,
+                overall_action=action,
+                overall_reason=reason,
+                suggested_lots=int(suggested_lots),
+                news=[ExpertNewsItem(**item) for item in news_items],
+                realtime=ExpertRealtimeQuote(**realtime) if realtime else None,
+                execution=execution,
+            )
+        )
+        logger.debug(
+            "expert_symbol_done | symbol=%s action=%s ms=%.1f",
+            symbol,
+            action,
+            (time.perf_counter() - sym_t0) * 1000.0,
+        )
+
+    logger.debug(
+        "expert_done | account_id=%s symbols=%s ms=%.1f",
+        str(acc.account_id),
+        len(results),
+        (time.perf_counter() - t0) * 1000.0,
+    )
+    return StockExpertAdvice(
+        ok=True,
+        account_id=str(acc.account_id),
+        asof=fmt_shanghai(now) or now.isoformat(),
+        authorized=bool(req.authorize_trade),
+        executed=bool(req.execute and req.authorize_trade),
+        symbols=results,
+        warnings=warnings,
+    )
+
+
 @app.get("/risk", tags=["trading"])
 async def risk_status(user: AuthenticatedUser = Depends(require_user)):
     risk = app.state.risk
@@ -891,7 +1228,7 @@ async def execute(
 @app.get("/trade_history/{symbol}", tags=["trading"])
 async def get_trade_history(
     symbol: str,
-    now_ts: str = Query(..., description="YYYY-MM-DD HH:MM:SS"),
+    now_ts: Optional[str] = Query(None, description="YYYY-MM-DD HH:MM:SS"),
     limit: int = Query(50, ge=1, le=200),
     include_json: bool = Query(False),
     account_id: str = Query("default", min_length=1, max_length=64, description="Account identifier"),
@@ -899,6 +1236,8 @@ async def get_trade_history(
 ):
     code = normalize_cn_symbol(symbol)
     trade_history_db: TradeHistoryDB = app.state.trade_history_db
+    if not now_ts:
+        now_ts = fmt_shanghai(now_shanghai())
     recs = await trade_history_db.list_intraday_today(
         code,
         now_ts=now_ts,
@@ -957,6 +1296,10 @@ async def api_stock_bars(
         })
         return payload
     except Exception as e:
+        msg = str(e)
+        lowered = msg.lower()
+        if "max retries exceeded" in lowered or "proxy" in lowered or "remote end closed" in lowered:
+            raise HTTPException(status_code=503, detail="stock_bars_unavailable: upstream provider rate limit or connection issue")
         raise HTTPException(status_code=400, detail=f"stock_bars_error: {e}")
 
 
@@ -988,6 +1331,39 @@ async def api_stock_daily(
         return payload
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"stock_daily_error: {e}")
+
+
+@app.get("/api/stock/period", tags=["trading"])
+async def api_stock_period(
+    symbol: str,
+    start: str,
+    end: str,
+    period: str = "daily",
+    adjust: str = "",
+    user: AuthenticatedUser = Depends(require_user),
+):
+    code = normalize_cn_symbol(symbol)
+    try:
+        df = await run_in_threadpool(
+            fetch_cn_period_bars,
+            symbol=code,
+            start=start,
+            end=end,
+            period=period,
+            adjust=adjust,
+        )
+        payload = bars_to_payload(df)
+        payload.update({
+            "symbol": code,
+            "start": start,
+            "end": end,
+            "period": period,
+            "adjust": adjust,
+            "count": len(df),
+        })
+        return payload
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"stock_period_error: {e}")
 
 
 # -------------------------

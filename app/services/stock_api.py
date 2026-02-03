@@ -1,4 +1,4 @@
-# app/services/stock_api.py
+﻿# app/services/stock_api.py
 from __future__ import annotations
 
 from typing import Literal, Dict, Any, Optional
@@ -50,43 +50,39 @@ def fetch_cn_minute_bars(
     if df is None or df.empty:
         raise ValueError("No minute data returned. Try a closer date range or larger freq.")
 
-    # Identify timestamp column
-    tcol = "时间" if "时间" in df.columns else ("日期" if "日期" in df.columns else None)
+    time_col = "\u65f6\u95f4"
+    date_col = "\u65e5\u671f"
+    tcol = time_col if time_col in df.columns else (date_col if date_col in df.columns else None)
     if tcol is None:
-        raise ValueError(f"Unexpected columns (missing 时间/日期): {list(df.columns)}")
+        raise ValueError(f"Unexpected columns (missing {time_col}/{date_col}): {list(df.columns)}")
 
     df[tcol] = pd.to_datetime(df[tcol])
     df = df.sort_values(tcol).set_index(tcol)
 
-    # Normalize columns (CN first, then possible EN fallbacks)
     rename_map = {}
     pairs = [
-        ("开盘", "open"),
-        ("最高", "high"),
-        ("最低", "low"),
-        ("收盘", "close"),
-        ("成交量", "volume"),
-        ("成交额", "amount"),  # NEW keep
-        ("均价", "vwap"),      # NEW keep
+        ("\u5f00\u76d8", "open"),
+        ("\u6700\u9ad8", "high"),
+        ("\u6700\u4f4e", "low"),
+        ("\u6536\u76d8", "close"),
+        ("\u6210\u4ea4\u91cf", "volume"),
+        ("\u6210\u4ea4\u989d", "amount"),
+        ("\u5747\u4ef7", "vwap"),
     ]
     for cn, en in pairs:
         if cn in df.columns:
             rename_map[cn] = en
     df = df.rename(columns=rename_map)
 
-    # Some versions might not have 收盘 but have 最新价
-    if "close" not in df.columns and "最新价" in df.columns:
-        df["close"] = pd.to_numeric(df["最新价"], errors="coerce")
+    if "close" not in df.columns and "\u6700\u65b0\u4ef7" in df.columns:
+        df["close"] = pd.to_numeric(df["\u6700\u65b0\u4ef7"], errors="coerce")
 
-    # Coerce numeric
     for col in ["open", "high", "low", "close", "volume", "amount", "vwap"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Drop invalid rows
     df = df.dropna(subset=["close"])
 
-    # Limit rows from the end
     if limit is not None:
         limit = int(limit)
         if limit > 0 and len(df) > limit:
@@ -118,22 +114,23 @@ def fetch_cn_daily_bars(
     if df is None or df.empty:
         raise ValueError("No daily data returned. Try a closer date range.")
 
-    # Identify timestamp column
-    tcol = "日期" if "日期" in df.columns else ("时间" if "时间" in df.columns else None)
+    date_col = "\u65e5\u671f"
+    time_col = "\u65f6\u95f4"
+    tcol = date_col if date_col in df.columns else (time_col if time_col in df.columns else None)
     if tcol is None:
-        raise ValueError(f"Unexpected columns (missing 日期/时间): {list(df.columns)}")
+        raise ValueError(f"Unexpected columns (missing {date_col}/{time_col}): {list(df.columns)}")
 
     df[tcol] = pd.to_datetime(df[tcol])
     df = df.sort_values(tcol).set_index(tcol)
 
     rename_map = {}
     pairs = [
-        ("开盘", "open"),
-        ("最高", "high"),
-        ("最低", "low"),
-        ("收盘", "close"),
-        ("成交量", "volume"),
-        ("成交额", "amount"),
+        ("\u5f00\u76d8", "open"),
+        ("\u6700\u9ad8", "high"),
+        ("\u6700\u4f4e", "low"),
+        ("\u6536\u76d8", "close"),
+        ("\u6210\u4ea4\u91cf", "volume"),
+        ("\u6210\u4ea4\u989d", "amount"),
     ]
     for cn, en in pairs:
         if cn in df.columns:
@@ -163,8 +160,65 @@ def bars_to_payload(df: pd.DataFrame) -> Dict[str, Any]:
     out = out.reset_index().rename(columns={out.index.name or "index": "ts"})
     out["ts"] = pd.to_datetime(out["ts"]).dt.strftime("%Y-%m-%d %H:%M:%S")
 
-    # Ensure JSON-safe floats (optional; pandas will usually do fine)
     for c in cols:
         out[c] = out[c].apply(lambda x: None if pd.isna(x) else float(x))
 
     return {"bars": out.to_dict(orient="records")}
+
+
+def fetch_cn_period_bars(
+    *,
+    symbol: str,
+    start: str,
+    end: str,
+    period: Literal["daily", "weekly", "monthly", "quarterly"] = "daily",
+    adjust: str = "",
+) -> pd.DataFrame:
+    """
+    Fetch A-share bars via AkShare with a native period.
+    Output DataFrame indexed by date with normalized columns:
+      - open, high, low, close, volume
+      - amount (optional)
+    """
+    df = ak.stock_zh_a_hist(
+        symbol=symbol.strip(),
+        start_date=start,
+        end_date=end,
+        period=period,
+        adjust=adjust,
+    )
+    if df is None or df.empty:
+        raise ValueError(f"No {period} data returned. Try a closer date range.")
+
+    date_col = "\u65e5\u671f"
+    time_col = "\u65f6\u95f4"
+    tcol = date_col if date_col in df.columns else (time_col if time_col in df.columns else None)
+    if tcol is None:
+        raise ValueError(f"Unexpected columns (missing {date_col}/{time_col}): {list(df.columns)}")
+
+    df[tcol] = pd.to_datetime(df[tcol])
+    df = df.sort_values(tcol).set_index(tcol)
+
+    rename_map = {}
+    pairs = [
+        ("\u5f00\u76d8", "open"),
+        ("\u6700\u9ad8", "high"),
+        ("\u6700\u4f4e", "low"),
+        ("\u6536\u76d8", "close"),
+        ("\u6210\u4ea4\u91cf", "volume"),
+        ("\u6210\u4ea4\u989d", "amount"),
+    ]
+    for cn, en in pairs:
+        if cn in df.columns:
+            rename_map[cn] = en
+    df = df.rename(columns=rename_map)
+
+    if "close" not in df.columns:
+        raise ValueError(f"Unexpected columns (missing close): {list(df.columns)}")
+
+    for col in ["open", "high", "low", "close", "volume", "amount"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    df = df.dropna(subset=["close"])
+    return df
