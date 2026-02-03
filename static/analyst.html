@@ -405,11 +405,6 @@
           <label for="userNote">User note (optional)</label>
           <textarea id="userNote" rows="3" placeholder="Risk preference, upcoming events, or constraints."></textarea>
         </div>
-        <div class="row">
-          <button class="btn accent" id="runAgentBtn">Run analysis</button>
-          <button class="btn" id="refreshAccountsBtn">Refresh accounts</button>
-        </div>
-
         <div class="card" style="margin-top:14px;">
           <div class="kicker">Account snapshot</div>
           <div id="accountSummary" class="muted">Select an account to see positions.</div>
@@ -424,6 +419,11 @@
             </thead>
             <tbody id="positionsTable"></tbody>
           </table>
+        </div>
+
+        <div class="row" style="margin-top:14px;">
+          <button class="btn accent" id="runAgentBtn">Run analysis</button>
+          <button class="btn" id="refreshAccountsBtn">Refresh accounts</button>
         </div>
       </div>
 
@@ -483,6 +483,29 @@
       return num.toLocaleString(undefined, { maximumFractionDigits: 2 });
     }
 
+    function numberOrZero(value) {
+      const num = Number(value);
+      return Number.isNaN(num) ? 0 : num;
+    }
+
+    function calcPositionsCost(positions) {
+      return (positions || []).reduce((sum, pos) => {
+        const shares = numberOrZero(pos.shares);
+        const avgCost = numberOrZero(pos.avg_cost_cny);
+        return sum + (shares * avgCost);
+      }, 0);
+    }
+
+    function calcUnrealizedPnl(positions) {
+      return (positions || []).reduce((sum, pos) => sum + numberOrZero(pos.unrealized_pnl_cny), 0);
+    }
+
+    function calcTotalAssets(detail) {
+      const cash = numberOrZero(detail?.cash_cny);
+      const positions = detail?.positions || [];
+      return cash + calcPositionsCost(positions) + calcUnrealizedPnl(positions);
+    }
+
     function escapeHtml(str) {
       return String(str || "")
         .replace(/&/g, "&amp;")
@@ -538,6 +561,7 @@
         renderSymbolSelect([]);
         return;
       }
+      const totalAssets = calcTotalAssets(detail);
       els.accountSummary.innerHTML = `
         <div class="row">
           <div class="card">
@@ -547,6 +571,10 @@
           <div class="card">
             <div class="kicker">Cash</div>
             <div class="value">${money(detail.cash_cny)} CNY</div>
+          </div>
+          <div class="card">
+            <div class="kicker">Total Assets</div>
+            <div class="value">${money(totalAssets)} CNY</div>
           </div>
           <div class="card">
             <div class="kicker">Positions</div>

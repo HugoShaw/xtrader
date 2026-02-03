@@ -48,6 +48,54 @@
       gap: 22px;
     }
 
+    .navbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 12px 16px;
+      border-radius: 16px;
+      background: rgba(255,255,255,0.85);
+      border: 1px solid rgba(16,19,28,0.12);
+      box-shadow: var(--shadow);
+    }
+
+    .nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .nav-link {
+      padding: 8px 12px;
+      border-radius: 999px;
+      text-decoration: none;
+      color: var(--ink);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      border: 1px solid transparent;
+      background: rgba(255,255,255,0.6);
+      transition: transform .2s ease, background .2s ease, border-color .2s ease;
+    }
+    .nav-link:hover { transform: translateY(-1px); border-color: rgba(16,19,28,0.16); }
+    .nav-link.accent { border-color: rgba(229,125,52,0.55); background: rgba(229,125,52,0.12); color: #8a3c10; }
+    .nav-link.primary { border-color: rgba(47,111,237,0.5); background: rgba(47,111,237,0.12); color: #1b3a85; }
+
+    @media (max-width: 720px) {
+      .navbar { flex-direction: column; align-items: flex-start; }
+      .nav-links { width: 100%; }
+    }
+
     header {
       display: grid;
       gap: 10px;
@@ -223,6 +271,103 @@
       color: var(--muted);
     }
 
+    .fold {
+      border: 1px solid rgba(16,19,28,0.12);
+      border-radius: 14px;
+      background: rgba(255,255,255,0.75);
+      padding: 0;
+      overflow: hidden;
+    }
+
+    .fold summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 12px 14px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .6px;
+      color: var(--muted);
+      background: rgba(255,255,255,0.75);
+    }
+
+    .fold summary::-webkit-details-marker { display: none; }
+
+    .fold summary::after {
+      content: "+";
+      font-size: 14px;
+      color: var(--ink);
+    }
+
+    .fold[open] summary::after {
+      content: "–";
+    }
+
+    .fold-body {
+      padding: 12px 14px 14px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .editor-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }
+
+    .money-field {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px dashed rgba(16,19,28,0.16);
+      background: rgba(255,255,255,0.85);
+    }
+
+    .money-field .money-input {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(16,19,28,0.14);
+      background: #fff;
+    }
+
+    .money-field .money-input input {
+      border: none;
+      outline: none;
+      flex: 1;
+      font-size: 16px;
+      background: transparent;
+    }
+
+    .money-field .money-input span {
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .6px;
+    }
+
+    .editor-actions {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .danger-zone {
+      margin-top: 6px;
+      display: grid;
+      gap: 8px;
+      padding-top: 10px;
+      border-top: 1px dashed rgba(211,72,72,0.35);
+    }
+
     @media (max-width: 980px) {
       .layout { grid-template-columns: 1fr; }
     }
@@ -231,6 +376,16 @@
 <body>
   <div class="noise"></div>
   <div class="wrap">
+    <nav class="navbar">
+      <div class="nav-brand">xtrader</div>
+      <div class="nav-links">
+        <a class="nav-link" href="/">Home</a>
+        <a class="nav-link" href="/agent/analyst">Analyst</a>
+        <span id="navUser" class="pill" style="display:none;"></span>
+        <a id="navLogin" class="nav-link primary" href="/login">Login</a>
+        <a id="navLogout" class="nav-link accent" href="/logout" style="display:none;">Logout</a>
+      </div>
+    </nav>
     <header>
       <div class="eyebrow">Profile · Trade Accounts</div>
       <h1>Account management dashboard</h1>
@@ -314,53 +469,63 @@
         </div>
 
         <div id="positionsPanel" style="margin-top:14px; display:none;">
-          <div class="card">
-            <div class="kicker">Account editor</div>
-            <div class="row">
-              <div class="field">
-                <label for="editAccountCash">Cash (CNY)</label>
-                <input id="editAccountCash" type="number" step="0.01" />
+          <details class="fold" open>
+            <summary>Account editor</summary>
+            <div class="fold-body">
+              <div class="money-field">
+                <div class="kicker">Cash balance</div>
+                <div class="money-input">
+                  <input id="editAccountCash" type="number" step="0.01" />
+                  <span>CNY</span>
+                </div>
+                <div class="muted">Update available cash for this account.</div>
+              </div>
+              <div class="editor-grid">
+                <div class="field">
+                  <label for="editAccountCurrency">Base Currency</label>
+                  <input id="editAccountCurrency" />
+                </div>
+              </div>
+              <div class="editor-actions">
+                <button class="btn good" id="saveAccountBtn">Save changes</button>
+              </div>
+              <div class="danger-zone">
+                <div class="kicker" style="color:#912a2a;">Danger zone</div>
+                <div class="muted">Deleting an account removes all positions.</div>
+                <button class="btn danger" id="deleteAccountBtn">Delete account</button>
               </div>
             </div>
-            <div class="row">
-              <div class="field">
-                <label for="editAccountCurrency">Base Currency</label>
-                <input id="editAccountCurrency" />
-              </div>
-            </div>
-            <div class="row">
-              <button class="btn good" id="saveAccountBtn">Save changes</button>
-              <button class="btn danger" id="deleteAccountBtn">Delete account</button>
-            </div>
-          </div>
+          </details>
 
-          <div class="card" style="margin-top:14px;">
-            <div class="kicker">Add / update position</div>
-            <div class="row">
-              <div class="field">
-                <label for="posSymbol">Symbol</label>
-                <input id="posSymbol" placeholder="e.g. 600519" />
+          <details class="fold" open style="margin-top:14px;">
+            <summary>Add / update position</summary>
+            <div class="fold-body">
+              <div class="editor-grid">
+                <div class="field">
+                  <label for="posSymbol">Symbol</label>
+                  <input id="posSymbol" placeholder="e.g. 600519" />
+                </div>
+                <div class="field">
+                  <label for="posShares">Shares</label>
+                  <input id="posShares" type="number" step="1" value="0" />
+                </div>
               </div>
-              <div class="field">
-                <label for="posShares">Shares</label>
-                <input id="posShares" type="number" step="1" value="0" />
+              <div class="editor-grid">
+                <div class="field">
+                  <label for="posAvgCost">Avg cost (CNY)</label>
+                  <input id="posAvgCost" type="number" step="0.01" />
+                </div>
+                <div class="field">
+                  <label for="posUnrealized">Unrealized PnL (CNY)</label>
+                  <input id="posUnrealized" type="number" step="0.01" />
+                </div>
+              </div>
+              <div class="editor-actions">
+                <button class="btn primary" id="savePositionBtn">Save position</button>
+                <button class="btn" id="resetPositionBtn">Reset</button>
               </div>
             </div>
-            <div class="row">
-              <div class="field">
-                <label for="posAvgCost">Avg cost (CNY)</label>
-                <input id="posAvgCost" type="number" step="0.01" />
-              </div>
-              <div class="field">
-                <label for="posUnrealized">Unrealized PnL (CNY)</label>
-                <input id="posUnrealized" type="number" step="0.01" />
-              </div>
-            </div>
-            <div class="row">
-              <button class="btn primary" id="savePositionBtn">Save position</button>
-              <button class="btn" id="resetPositionBtn">Reset</button>
-            </div>
-          </div>
+          </details>
 
           <div class="card" style="margin-top:14px;">
             <div class="footer">
@@ -416,6 +581,9 @@
       positionSummary: document.getElementById("positionSummary"),
       positionsTable: document.querySelector("#positionsTable tbody"),
       userLine: document.getElementById("userLine"),
+      navUser: document.getElementById("navUser"),
+      navLogin: document.getElementById("navLogin"),
+      navLogout: document.getElementById("navLogout"),
       newAccountId: document.getElementById("newAccountId"),
       newAccountCash: document.getElementById("newAccountCash"),
       newAccountCurrency: document.getElementById("newAccountCurrency"),
@@ -437,6 +605,28 @@
       const num = Number(v);
       if (Number.isNaN(num)) return "--";
       return num.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    }
+
+    function numberOrZero(value) {
+      const num = Number(value);
+      return Number.isNaN(num) ? 0 : num;
+    }
+
+    function calcPositionsCost(positions) {
+      return positions.reduce((sum, pos) => {
+        const shares = numberOrZero(pos.shares);
+        const avgCost = numberOrZero(pos.avg_cost_cny);
+        return sum + (shares * avgCost);
+      }, 0);
+    }
+
+    function calcUnrealizedPnl(positions) {
+      return positions.reduce((sum, pos) => sum + numberOrZero(pos.unrealized_pnl_cny), 0);
+    }
+
+    function calcTotalAssets(account, positions) {
+      const cash = numberOrZero(account?.cash_cny);
+      return cash + calcPositionsCost(positions) + calcUnrealizedPnl(positions);
     }
 
     function renderAccounts() {
@@ -468,7 +658,9 @@
         return;
       }
 
-      const totalPnl = state.positions.reduce((acc, p) => acc + (Number(p.unrealized_pnl_cny) || 0), 0);
+      const totalPnl = calcUnrealizedPnl(state.positions);
+      const totalAssets = calcTotalAssets(state.selected, state.positions);
+      const positionsCost = calcPositionsCost(state.positions);
       els.accountDetails.innerHTML = `
         <div class="kicker">Selected account</div>
         <div class="value">${state.selected.account_id}</div>
@@ -479,12 +671,20 @@
             <div class="value">${money(state.selected.cash_cny)} CNY</div>
           </div>
           <div class="card">
+            <div class="kicker">Positions Cost</div>
+            <div class="value">${money(positionsCost)} CNY</div>
+          </div>
+          <div class="card">
             <div class="kicker">Positions</div>
             <div class="value">${state.positions.length}</div>
           </div>
           <div class="card">
             <div class="kicker">Unrealized PnL</div>
             <div class="value" style="color:${totalPnl >= 0 ? '#0e6a3d' : '#912a2a'}">${money(totalPnl)} CNY</div>
+          </div>
+          <div class="card">
+            <div class="kicker">Total Assets</div>
+            <div class="value">${money(totalAssets)} CNY</div>
           </div>
         </div>
       `;
@@ -704,11 +904,23 @@
         const me = await api("/auth/me");
         if (me && me.user) {
           els.userLine.textContent = `Logged in as ${me.user.username}`;
+          els.navUser.textContent = me.user.username;
+          els.navUser.style.display = "inline-flex";
+          els.navLogin.style.display = "none";
+          els.navLogout.style.display = "inline-flex";
         } else {
           els.userLine.textContent = "Logged in";
+          els.navUser.textContent = "";
+          els.navUser.style.display = "none";
+          els.navLogin.style.display = "inline-flex";
+          els.navLogout.style.display = "none";
         }
       } catch (err) {
         els.userLine.textContent = "Login required";
+        els.navUser.textContent = "";
+        els.navUser.style.display = "none";
+        els.navLogin.style.display = "inline-flex";
+        els.navLogout.style.display = "none";
       }
     }
 

@@ -1,4 +1,4 @@
-<!-- app/static/execute.html -->
+﻿<!-- app/static/execute.html -->
 <!doctype html>
 <html lang="en">
 <head>
@@ -8,6 +8,62 @@
   <style>
     :root { font-family: "Trebuchet MS", "Segoe UI", Tahoma, sans-serif; }
     body { margin: 0; background: #0b0f19; color: #e8eefc; }
+    .topNav {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      backdrop-filter: blur(10px);
+      background: rgba(7, 10, 16, .8);
+      border-bottom: 1px solid rgba(255,255,255,.08);
+    }
+    .topNavInner {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .topBrand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      letter-spacing: .3px;
+      font-size: 14px;
+      text-transform: uppercase;
+    }
+    .topBrand .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: rgba(110,168,254,.9);
+      box-shadow: 0 0 12px rgba(110,168,254,.65);
+    }
+    .topNavLinks {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .topNavLinks a {
+      color: #e8eefc;
+      text-decoration: none;
+      font-size: 12px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,.10);
+      background: rgba(255,255,255,.04);
+      opacity: .85;
+    }
+    .topNavLinks a.active,
+    .topNavLinks a:hover {
+      opacity: 1;
+      border-color: rgba(110,168,254,.45);
+      background: rgba(110,168,254,.18);
+    }
     header { padding: 18px 20px; border-bottom: 1px solid rgba(255,255,255,.08); display: grid; gap: 6px; }
     header h1 { margin: 0; font-size: 18px; font-weight: 650; }
     header p { margin: 0; opacity: .8; font-size: 13px; }
@@ -325,6 +381,30 @@
     .chartCard.folded .chartTop .title .chev { transform: rotate(-90deg); }
 
     .chartTop .meta { font-size: 11px; opacity: .75; }
+    .chartLegend {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding: 0 6px 4px;
+      font-size: 11px;
+      color: rgba(232,238,252,.85);
+    }
+    .chartCard.snapshot .chartLegend { padding: 0 10px 4px; }
+    .chartLegend .item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+    .chartLegend .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      box-shadow: 0 0 0 1px rgba(255,255,255,.12);
+      background: var(--legend-color, rgba(232,238,252,.85));
+    }
+    .chartCard.folded .chartLegend { display: none; }
     /* --- Candlestick plot --- */
     .chartWrap { 
       position: relative; 
@@ -369,6 +449,20 @@
       font-weight: 650;
       opacity: .9;
     }
+        .toolBtn.icon {
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+    }
+    .toolBtn.icon svg {
+      width: 16px;
+      height: 16px;
+      display: block;
+    }
     .toolBtn:hover { background: rgba(255,255,255,.10); }
     .toolBtn.active {
       background: rgba(110,168,254,.25);
@@ -381,7 +475,21 @@
       background: rgba(110,168,254,.16);
       box-shadow: inset 0 0 0 1px rgba(255,255,255,.05);
     }
-    .chartCard.snapshot .toolBtn:hover { background: rgba(110,168,254,.22); }
+    .chartCard.snapshot     .toolBtn.icon {
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+    }
+    .toolBtn.icon svg {
+      width: 16px;
+      height: 16px;
+      display: block;
+    }
+    .toolBtn:hover { background: rgba(255,255,255,.10); }
 
     .zoomBox {
       position: absolute;
@@ -484,14 +592,24 @@
 </head>
 
 <body>
-<header>
-  <div class="headerRow">
-    <h1>xtrader trading UI</h1>
+<nav class="topNav" aria-label="Primary">
+  <div class="topNavInner">
+    <div class="topBrand"><span class="dot"></span>xtrader</div>
+    <div class="topNavLinks">
+      <a href="/">Home</a>
+      <a class="active" href="/execute">Execute</a>
+      <a href="/analyst">Analyst</a>
+    </div>
     <div class="authBox">
       <span id="authUser" class="authUser authHidden"></span>
       <button id="btnLogin" class="primary" type="button">Log In</button>
       <button id="btnLogout" class="danger authHidden" type="button">Log Out</button>
     </div>
+  </div>
+</nav>
+<header>
+  <div class="headerRow">
+    <h1>xtrader trading UI</h1>
   </div>
   <p>
     Send a symbol + trading context to
@@ -760,6 +878,76 @@
 
     const get = (type) => parts.find(p => p.type === type)?.value ?? "";
     return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")}`;
+  }
+
+  function shanghaiPartsFromMs(ms) {
+    const dt = new Date(ms);
+    const parts = new Intl.DateTimeFormat("sv-SE", {
+      timeZone: TZ,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+      hour12: false
+    }).formatToParts(dt);
+    const get = (type) => parts.find(p => p.type === type)?.value ?? "";
+    return {
+      year: Number(get("year")),
+      month: Number(get("month")),
+      day: Number(get("day")),
+      hour: Number(get("hour")),
+      minute: Number(get("minute")),
+      second: Number(get("second"))
+    };
+  }
+
+  function shanghaiMsForYmdHm(ymd, hh, mm) {
+    const m = String(ymd || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return null;
+    const yyyy = Number(m[1]);
+    const MM = Number(m[2]);
+    const dd = Number(m[3]);
+    return Date.UTC(yyyy, MM - 1, dd, Number(hh) - 8, Number(mm), 0);
+  }
+
+  function shanghaiNowMs() {
+    const p = shanghaiNowParts();
+    return Date.UTC(p.year, p.month - 1, p.day, p.hour - 8, p.minute, p.second);
+  }
+
+  function isShanghaiTradingSessionMs(ms) {
+    if (!Number.isFinite(ms)) return false;
+    const p = shanghaiPartsFromMs(ms);
+    const mins = (p.hour * 60) + p.minute;
+    // Per request: 09:30-11:30 and 13:00-15:00
+    const amOpen = 9 * 60 + 30;
+    const amClose = 11 * 60 + 30;
+    const pmOpen = 13 * 60;
+    const pmClose = 15 * 60;
+    const inMorning = mins >= amOpen && mins <= amClose;
+    const inAfternoon = mins >= pmOpen && mins <= pmClose;
+    return inMorning || inAfternoon;
+  }
+
+  function shanghaiTradingRangeForMs(ms) {
+    if (!Number.isFinite(ms)) return null;
+    const p = shanghaiPartsFromMs(ms);
+    const ymd = `${p.year.toString().padStart(4, "0")}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
+    const tOpen = shanghaiMsForYmdHm(ymd, 9, 30);
+    const tLunchStart = shanghaiMsForYmdHm(ymd, 11, 30);
+    const tLunchEnd = shanghaiMsForYmdHm(ymd, 13, 0);
+    const tClose = shanghaiMsForYmdHm(ymd, 15, 0);
+    if (![tOpen, tLunchStart, tLunchEnd, tClose].every(Number.isFinite)) return null;
+    const morningMs = tLunchStart - tOpen;
+    const afternoonMs = tClose - tLunchEnd;
+    const tradeMs = morningMs + afternoonMs;
+    return { tOpen, tLunchStart, tLunchEnd, tClose, morningMs, afternoonMs, tradeMs };
+  }
+
+  function clampShanghaiMsToTrading(ms, range) {
+    if (!range || !Number.isFinite(ms)) return ms;
+    if (ms <= range.tOpen) return range.tOpen;
+    if (ms >= range.tClose) return range.tClose;
+    if (ms > range.tLunchStart && ms < range.tLunchEnd) return range.tLunchStart;
+    return ms;
   }
 
    function shanghaiTodayYmd() {
@@ -1260,6 +1448,23 @@ function drawTopLegend(ctx, items, padL, padT, cssW, padR) {
   ctx.restore();
 }
 
+function renderMaLegend(card, items) {
+  if (!card) return;
+  const legend = card.querySelector(".chartLegend");
+  if (!legend) return;
+  if (!Array.isArray(items) || items.length === 0) {
+    legend.innerHTML = "";
+    return;
+  }
+  legend.innerHTML = items
+    .map(it => {
+      const label = escapeHtml(String(it?.label || ""));
+      const color = String(it?.color || "rgba(232,238,252,.85)");
+      return `<span class="item"><span class="dot" style="--legend-color:${color}"></span>${label}</span>`;
+    })
+    .join("");
+}
+
   // -----------------------------
   // Mode / route selection
   // -----------------------------
@@ -1710,18 +1915,23 @@ function setZoomHint(card, text) {
 }
 
 function wireZoomForChart(card, canvas, getFullBars, getMarkers, redrawWithView) {
-  // card.__zoomState = { enabled, view:{tMin,tMax}|null }
+  // card.__zoomState = { level, view:{tMin,tMax}|null, maxLevel }
   if (!card || !canvas) return;
 
-  card.__zoomState = card.__zoomState || { enabled: false, view: null };
+  const zoomScales = [1, 0.75, 0.6, 0.45, 0.3];
+  const maxLevel = zoomScales.length - 1;
+  card.__zoomState = card.__zoomState || { level: 0, view: null, maxLevel };
+  card.__zoomState.maxLevel = maxLevel;
 
-  const btnZoom = card.querySelector('button[data-act="zoom"]');
+  const btnZoomIn = card.querySelector('button[data-act="zoom-in"]');
+  const btnZoomOut = card.querySelector('button[data-act="zoom-out"]');
   const btnReset = card.querySelector('button[data-act="reset"]');
   const zoomBox = card.querySelector(".zoomBox");
 
-  const setZoomEnabledUI = (on) => {
-    if (btnZoom) btnZoom.classList.toggle("active", !!on);
-    setZoomHint(card, on ? "Drag on chart to zoom. Double-click to reset." : "");
+  const updateZoomUI = () => {
+    if (btnZoomIn) btnZoomIn.disabled = card.__zoomState.level >= maxLevel;
+    if (btnZoomOut) btnZoomOut.disabled = card.__zoomState.level <= 0;
+    setZoomHint(card, "Use + / - to zoom. Double-click to reset.");
   };
 
   const applyView = (view) => {
@@ -1729,22 +1939,66 @@ function wireZoomForChart(card, canvas, getFullBars, getMarkers, redrawWithView)
     redrawWithView(card.__zoomState.view);
   };
 
+  const computeSnapshotFocusView = (bars, markers) => {
+    const refMs = Number.isFinite(bars?.[0]?.t)
+      ? bars[0].t
+      : (Number.isFinite(markers?.[0]?.t) ? markers[0].t : null);
+    if (!Number.isFinite(refMs)) return null;
+    const range = shanghaiTradingRangeForMs(refMs);
+    if (!range) return null;
+    const tMin = range.tOpen;
+    const nowMs = Number.isFinite(shanghaiNowMs()) ? shanghaiNowMs() : range.tClose;
+    const tMax = clampShanghaiMsToTrading(nowMs, range);
+    return (Number.isFinite(tMin) && Number.isFinite(tMax)) ? { tMin, tMax } : null;
+  };
+
+  const computeViewForLevel = (bars, level) => {
+    if (!bars || bars.length < 2) return null;
+    if (!Number.isFinite(level) || level <= 0) return null;
+    const scale = zoomScales[Math.min(maxLevel, Math.max(0, level))];
+    const minBars = 20;
+    const count = Math.max(minBars, Math.floor(bars.length * scale));
+    const startIdx = Math.max(0, bars.length - Math.min(bars.length, count));
+    const tMin = bars[startIdx]?.t;
+    const tMax = bars[bars.length - 1]?.t;
+    if (!Number.isFinite(tMin) || !Number.isFinite(tMax)) return null;
+    return { tMin, tMax };
+  };
+
+  const setZoomLevel = (nextLevel) => {
+    const level = Math.max(0, Math.min(maxLevel, nextLevel));
+    card.__zoomState.level = level;
+    const bars = getFullBars();
+    let view = computeViewForLevel(bars, level);
+    if (level > 0 && card?.classList?.contains("snapshot")) {
+      view = computeSnapshotFocusView(bars, getMarkers());
+    }
+    applyView(view);
+    updateZoomUI();
+  };
+
   // Buttons
-  if (btnZoom && !btnZoom.__wiredZoom) {
-    btnZoom.__wiredZoom = true;
-    btnZoom.addEventListener("click", (e) => {
-      e.stopPropagation(); // don’t fold/unfold
-      card.__zoomState.enabled = !card.__zoomState.enabled;
-      setZoomEnabledUI(card.__zoomState.enabled);
+  if (btnZoomIn && !btnZoomIn.__wiredZoomIn) {
+    btnZoomIn.__wiredZoomIn = true;
+    btnZoomIn.addEventListener("click", (e) => {
+      e.stopPropagation(); // don鈥檛 fold/unfold
+      setZoomLevel(card.__zoomState.level + 1);
+    });
+  }
+  if (btnZoomOut && !btnZoomOut.__wiredZoomOut) {
+    btnZoomOut.__wiredZoomOut = true;
+    btnZoomOut.addEventListener("click", (e) => {
+      e.stopPropagation(); // don鈥檛 fold/unfold
+      setZoomLevel(card.__zoomState.level - 1);
     });
   }
   if (btnReset && !btnReset.__wiredReset) {
     btnReset.__wiredReset = true;
     btnReset.addEventListener("click", (e) => {
       e.stopPropagation();
-      card.__zoomState.enabled = false;
-      setZoomEnabledUI(false);
+      card.__zoomState.level = 0;
       applyView(null);
+      updateZoomUI();
     });
   }
 
@@ -1752,13 +2006,13 @@ function wireZoomForChart(card, canvas, getFullBars, getMarkers, redrawWithView)
   if (!canvas.__wiredDblReset) {
     canvas.__wiredDblReset = true;
     canvas.addEventListener("dblclick", (e) => {
-      card.__zoomState.enabled = false;
-      setZoomEnabledUI(false);
+      card.__zoomState.level = 0;
       applyView(null);
+      updateZoomUI();
     });
   }
 
-  // Drag selection
+  // Drag selection (left for legacy; disabled without an enabled flag)
   if (canvas.__wiredZoomDrag) return;
   canvas.__wiredZoomDrag = true;
 
@@ -1841,7 +2095,7 @@ function wireZoomForChart(card, canvas, getFullBars, getMarkers, redrawWithView)
 
     // Auto turn off zoom mode after applying
     card.__zoomState.enabled = false;
-    setZoomEnabledUI(false);
+    updateZoomUI();
   };
 
   canvas.addEventListener("mousedown", onDown);
@@ -1853,10 +2107,8 @@ function wireZoomForChart(card, canvas, getFullBars, getMarkers, redrawWithView)
   window.addEventListener("touchend", onUp, { passive: false });
 
   // initial UI
-  setZoomEnabledUI(card.__zoomState.enabled);
+  updateZoomUI();
 }
-
-
 function renderCandleChartShell(symbol) {
   return `
     <div class="chartCard folded" data-chart="candles">
@@ -1867,11 +2119,23 @@ function renderCandleChartShell(symbol) {
           <span class="muted">source=<code>/api/stock/bars</code> • <span class="candleMeta">(loading…)</span></span>
           <span class="muted">•</span>
           <span class="chartTools">
-            <button class="toolBtn" type="button" data-act="zoom">Zoom</button>
+            <button class="toolBtn icon" type="button" data-act="zoom-in" aria-label="Zoom in">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" />
+                <path d="M12 8v8M8 12h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+              </svg>
+            </button>
+            <button class="toolBtn icon" type="button" data-act="zoom-out" aria-label="Zoom out">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" />
+                <path d="M8 12h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+              </svg>
+            </button>
             <button class="toolBtn" type="button" data-act="reset">Reset</button>
           </span>
         </div>
       </div>
+      <div class="chartLegend" aria-label="Moving averages"></div>
       <div class="chartWrap">
         <canvas class="candle"></canvas>
         <div class="zoomBox"></div>
@@ -2189,6 +2453,12 @@ function drawCandlesOnCanvas(canvas, ohlc, markers = [], view = null) {
     bars = bars.filter(x => Number.isFinite(x.t) && x.t >= a && x.t <= b);
   }
 
+  const card = canvas.closest(".chartCard");
+  const isSnapshot = !!(card && card.classList.contains("snapshot"));
+  if (isSnapshot) {
+    bars = bars.filter(b => isShanghaiTradingSessionMs(b?.t));
+  }
+
   // Store what is currently shown for zoom inversion mapping
   canvas.__barsShown = bars;
  
@@ -2196,10 +2466,16 @@ function drawCandlesOnCanvas(canvas, ohlc, markers = [], view = null) {
     ctx.fillStyle = "rgba(232,238,252,.7)";
     ctx.font = "12px system-ui";
     ctx.fillText("No bars", 10, 18);
+    renderMaLegend(card, []);
     return;
   }
 
-  const padL = 40, padR = 60, padT = 10, padB = 22;
+  const zoomLevel = Number.isFinite(card?.__zoomState?.level) ? card.__zoomState.level : 0;
+  const maxZoomLevel = Number.isFinite(card?.__zoomState?.maxLevel) ? card.__zoomState.maxLevel : 4;
+  const zoomOutFactor = maxZoomLevel > 0 ? 1 - (zoomLevel / maxZoomLevel) : 0;
+  const basePadR = 60;
+  const extraPadR = Math.round(zoomOutFactor * 60);
+  const padL = 40, padR = basePadR + extraPadR, padT = 10, padB = 22;
   const W = Math.max(1, cssW - padL - padR);
   const plotH = Math.max(1, cssH - padT - padB);
   const volRatio = 0.24;
@@ -2230,8 +2506,42 @@ function drawCandlesOnCanvas(canvas, ohlc, markers = [], view = null) {
   maxP += range * padPct;
 
   const yOf = (p) => priceTop + (maxP - p) * (priceH / (maxP - minP));
-  const xStep = W / Math.max(1, bars.length - 1);
+
+  let tradingRange = null;
+  if (isSnapshot) {
+    const refMs = Number.isFinite(bars[0]?.t) ? bars[0].t : (Number.isFinite(markers?.[0]?.t) ? markers[0].t : null);
+    if (Number.isFinite(refMs)) tradingRange = shanghaiTradingRangeForMs(refMs);
+  }
+  canvas.__xRange = tradingRange ? { ...tradingRange } : null;
+
+  let expectedCount = bars.length;
+  if (canvas.__xRange) {
+    const deltas = [];
+    for (let i = 1; i < bars.length; i++) {
+      const dt = bars[i].t - bars[i - 1].t;
+      if (Number.isFinite(dt) && dt > 0 && dt <= 10 * 60 * 1000) deltas.push(dt);
+    }
+    const avgDt = deltas.length ? (deltas.reduce((a, b) => a + b, 0) / deltas.length) : 60 * 1000;
+    expectedCount = Math.max(2, Math.round(canvas.__xRange.tradeMs / avgDt) + 1);
+  }
+
+  const xStep = W / Math.max(1, (canvas.__xRange ? expectedCount : bars.length) - 1);
   const xOfIdx = (i) => padL + i * xStep;
+  const xOfTsRange = (t) => {
+    if (!canvas.__xRange || !Number.isFinite(t)) return null;
+    const r = canvas.__xRange;
+    if (t <= r.tLunchStart) {
+      const frac = (t - r.tOpen) / Math.max(1, r.morningMs);
+      return padL + frac * (W * (r.morningMs / r.tradeMs));
+    }
+    if (t >= r.tLunchEnd) {
+      const afternoonW = W * (r.afternoonMs / r.tradeMs);
+      const frac = (t - r.tLunchEnd) / Math.max(1, r.afternoonMs);
+      return padL + (W - afternoonW) + frac * afternoonW;
+    }
+    return null;
+  };
+  const xOfBar = (bar, i) => (canvas.__xRange ? xOfTsRange(bar.t) : xOfIdx(i));
 
   // axes
   ctx.strokeStyle = "rgba(255,255,255,.10)";
@@ -2241,6 +2551,45 @@ function drawCandlesOnCanvas(canvas, ohlc, markers = [], view = null) {
   ctx.lineTo(padL, priceBottom);
   ctx.lineTo(padL + W, priceBottom);
   ctx.stroke();
+
+  // vertical grid lines (every 30 minutes)
+  ctx.save();
+  ctx.strokeStyle = "rgba(255,255,255,.06)";
+  ctx.lineWidth = 1;
+  ctx.setLineDash([3, 4]);
+  if (canvas.__xRange) {
+    const r = canvas.__xRange;
+    const tickMs = 30 * 60 * 1000;
+    for (let t = r.tOpen; t <= r.tLunchStart; t += tickMs) {
+      const x = xOfTsRange(t);
+      if (x == null) continue;
+      ctx.beginPath();
+      ctx.moveTo(x, priceTop);
+      ctx.lineTo(x, volBottom);
+      ctx.stroke();
+    }
+    for (let t = r.tLunchEnd; t <= r.tClose; t += tickMs) {
+      const x = xOfTsRange(t);
+      if (x == null) continue;
+      ctx.beginPath();
+      ctx.moveTo(x, priceTop);
+      ctx.lineTo(x, volBottom);
+      ctx.stroke();
+    }
+  } else {
+    for (let i = 0; i < bars.length; i++) {
+      const b = bars[i];
+      if (!Number.isFinite(b?.t)) continue;
+      const p = shanghaiPartsFromMs(b.t);
+      if (p.minute % 30 !== 0 || p.second !== 0) continue;
+      const x = xOfIdx(i);
+      ctx.beginPath();
+      ctx.moveTo(x, priceTop);
+      ctx.lineTo(x, volBottom);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
 
   // Y-axis (right-side) ticks + labels
   const tickCount = 5;
@@ -2298,7 +2647,7 @@ function drawCandlesOnCanvas(canvas, ohlc, markers = [], view = null) {
   // candles
   for (let i = 0; i < bars.length; i++) {
     const b = bars[i];
-    const x = xOfIdx(i);
+    const x = xOfBar(b, i);
 
     const yO = yOf(b.o);
     const yC = yOf(b.c);
@@ -2327,36 +2676,95 @@ function drawCandlesOnCanvas(canvas, ohlc, markers = [], view = null) {
     ctx.strokeRect(x - bw / 2, top, bw, bh);
   }
 
+  // hover guide (vertical line + bar highlight)
+  if (canvas.__hoverInfo && Number.isFinite(canvas.__hoverInfo.x)) {
+    const hx = canvas.__hoverInfo.x;
+    const hbw = Number.isFinite(canvas.__hoverInfo.bw) ? canvas.__hoverInfo.bw : Math.max(2, Math.min(14, xStep * 0.9));
+    ctx.save();
+    ctx.fillStyle = "rgba(110,168,254,.10)";
+    ctx.fillRect(hx - hbw / 2, priceTop, hbw, volBottom - priceTop);
+    ctx.strokeStyle = "rgba(110,168,254,.65)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(hx, priceTop);
+    ctx.lineTo(hx, volBottom);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   // -----------------------------
   // Draw Datetime on X-axis
   // -----------------------------
-  const timeFormat = new Intl.DateTimeFormat("en-GB", {
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit"
-  });
+  const timeFormat = isSnapshot
+    ? new Intl.DateTimeFormat("en-GB", {
+        timeZone: TZ,
+        hour: "2-digit", minute: "2-digit",
+        hour12: false
+      })
+    : new Intl.DateTimeFormat("en-GB", {
+        timeZone: TZ,
+        year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", second: "2-digit",
+        hour12: false
+      });
 
   const labelPadding = 10; // space between labels
 
   // Draw date labels at the bottom of each candle
   let lastX = -Infinity;  // Keep track of last label's x position to avoid overlap
-  for (let i = 0; i < bars.length; i++) {
-    const bar = bars[i];
-    const x = xOfIdx(i);
-    const dateStr = timeFormat.format(new Date(bar.t)); // Format the datetime
+  if (canvas.__xRange) {
+    const tickMs = 30 * 60 * 1000;
+    const r = canvas.__xRange;
+    for (let t = r.tOpen; t <= r.tLunchStart; t += tickMs) {
+      const x = xOfTsRange(t);
+      if (x == null) continue;
+      const dateStr = timeFormat.format(new Date(t));
+      ctx.fillStyle = "rgba(255,255,255,.85)";
+      ctx.font = "10px Arial";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      const textWidth = ctx.measureText(dateStr).width;
+      const padding = 5;
+      if (x - lastX > textWidth + labelPadding) {
+        ctx.fillText(dateStr, x, volBottom + padding);
+        lastX = x;
+      }
+    }
+    for (let t = r.tLunchEnd; t <= r.tClose; t += tickMs) {
+      const x = xOfTsRange(t);
+      if (x == null) continue;
+      const dateStr = timeFormat.format(new Date(t));
+      ctx.fillStyle = "rgba(255,255,255,.85)";
+      ctx.font = "10px Arial";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      const textWidth = ctx.measureText(dateStr).width;
+      const padding = 5;
+      if (x - lastX > textWidth + labelPadding) {
+        ctx.fillText(dateStr, x, volBottom + padding);
+        lastX = x;
+      }
+    }
+  } else {
+    for (let i = 0; i < bars.length; i++) {
+      const bar = bars[i];
+      const x = xOfIdx(i);
+      const dateStr = timeFormat.format(new Date(bar.t)); // Format the datetime
 
-    ctx.fillStyle = "rgba(255,255,255,.85)";
-    ctx.font = "10px Arial";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "top";
+      ctx.fillStyle = "rgba(255,255,255,.85)";
+      ctx.font = "10px Arial";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
 
-    const textWidth = ctx.measureText(dateStr).width;
-    const padding = 5;
+      const textWidth = ctx.measureText(dateStr).width;
+      const padding = 5;
 
-    // If the distance between current label and last label is too small, skip drawing this label
-    if (x - lastX > textWidth + labelPadding) {
-      // Draw the datetime label at the bottom of each candle
-      ctx.fillText(dateStr, x, volBottom + padding);
-      lastX = x;  // Update the position of the last label
+      // If the distance between current label and last label is too small, skip drawing this label
+      if (x - lastX > textWidth + labelPadding) {
+        // Draw the datetime label at the bottom of each candle
+        ctx.fillText(dateStr, x, volBottom + padding);
+        lastX = x;  // Update the position of the last label
+      }
     }
   }
 
@@ -2379,7 +2787,8 @@ function drawCandlesOnCanvas(canvas, ohlc, markers = [], view = null) {
     const sma = computeSMA(closes, w);
     const pts = sma.map((v, i) => {
       if (!Number.isFinite(v)) return null;
-      return { x: xOfIdx(i), y: yOf(v) };
+      const x = canvas.__xRange ? xOfTsRange(bars[i].t) : xOfIdx(i);
+      return { x, y: yOf(v) };
     });
 
     const color = maStyles[w] || "rgba(255,255,255,.8)";
@@ -2394,7 +2803,7 @@ function drawCandlesOnCanvas(canvas, ohlc, markers = [], view = null) {
     legendItems.push({ label, color });
   }
 
-  drawTopLegend(ctx, legendItems, padL, padT, cssW, padR);
+  renderMaLegend(card, legendItems);
 
   // last price horizontal line (latest close)
   const lastClose = closes[closes.length - 1];
@@ -2412,8 +2821,8 @@ function drawCandlesOnCanvas(canvas, ohlc, markers = [], view = null) {
   }
 
   // snapshot-only max/min labels
-  const card = canvas.closest(".chartCard");
-  if (card && card.classList.contains("snapshot")) {
+  const snapCard = canvas.closest(".chartCard");
+  if (snapCard && snapCard.classList.contains("snapshot")) {
     if (Number.isFinite(rawMaxP)) {
       const yMax = yOf(rawMaxP);
       drawHLine(
@@ -2444,8 +2853,11 @@ function drawCandlesOnCanvas(canvas, ohlc, markers = [], view = null) {
   // Markers
   // -----------------------------
   const markersPx = [];
-  for (const m of markers) {
-    const x = xOfTs(bars, m.t, padL, W);
+  const visibleMarkers = isSnapshot
+    ? (Array.isArray(markers) ? markers.filter(m => isShanghaiTradingSessionMs(m?.t)) : [])
+    : markers;
+  for (const m of (visibleMarkers || [])) {
+    const x = canvas.__xRange ? xOfTsRange(m.t) : xOfTs(bars, m.t, padL, W);
     if (x == null) continue;
 
     const price = Number.isFinite(Number(m.price)) ? Number(m.price) : bars[bars.length - 1].c;
@@ -2496,8 +2908,10 @@ function bindCandleHover(canvas) {
 
   const showTip = (bar, clientX, clientY, rect) => {
     const timeStr = new Intl.DateTimeFormat("en-GB", {
+      timeZone: TZ,
       year: "numeric", month: "2-digit", day: "2-digit",
-      hour: "2-digit", minute: "2-digit", second: "2-digit"
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+      hour12: false
     }).format(new Date(bar.t));
 
     tipEl.innerHTML = `
@@ -2525,17 +2939,79 @@ function bindCandleHover(canvas) {
     const { x, rect } = getMousePos(evt);
     const { padL, padR, cssW } = geom;
     const W = Math.max(1, cssW - padL - padR);
-    const n = bars.length;
-    const xStep = W / Math.max(1, n - 1);
     const xx = clamp(x, padL, padL + W);
-    const iFloat = (xx - padL) / xStep;
-    const idx = Math.max(0, Math.min(n - 1, Math.round(iFloat)));
-    const bar = bars[idx];
+
+    let bar = null;
+    let idx = -1;
+    if (canvas.__xRange) {
+      const r = canvas.__xRange;
+      const morningW = W * (r.morningMs / r.tradeMs);
+      let t = null;
+      if ((xx - padL) <= morningW) {
+        const frac = (xx - padL) / Math.max(1, morningW);
+        t = r.tOpen + frac * r.morningMs;
+      } else {
+        const afternoonW = W - morningW;
+        const frac = (xx - padL - morningW) / Math.max(1, afternoonW);
+        t = r.tLunchEnd + frac * r.afternoonMs;
+      }
+
+      // binary search nearest bar by time
+      let lo = 0, hi = bars.length - 1;
+      while (lo + 1 < hi) {
+        const mid = (lo + hi) >> 1;
+        if (bars[mid].t <= t) lo = mid;
+        else hi = mid;
+      }
+      const b0 = bars[lo];
+      const b1 = bars[hi];
+      bar = (!b1 || Math.abs(t - b0.t) <= Math.abs(t - b1.t)) ? b0 : b1;
+      idx = (bar === b1) ? hi : lo;
+    } else {
+      const n = bars.length;
+      const xStep = W / Math.max(1, n - 1);
+      const iFloat = (xx - padL) / xStep;
+      idx = Math.max(0, Math.min(n - 1, Math.round(iFloat)));
+      bar = bars[idx];
+    }
     if (!bar) return;
+    const bw = Math.max(2, Math.min(14, (W / Math.max(1, bars.length - 1)) * 0.9));
+    let hoverX = null;
+    if (canvas.__xRange) {
+      const r = canvas.__xRange;
+      if (bar.t <= r.tLunchStart) {
+        const frac = (bar.t - r.tOpen) / Math.max(1, r.morningMs);
+        hoverX = padL + frac * (W * (r.morningMs / r.tradeMs));
+      } else if (bar.t >= r.tLunchEnd) {
+        const afternoonW = W * (r.afternoonMs / r.tradeMs);
+        const frac = (bar.t - r.tLunchEnd) / Math.max(1, r.afternoonMs);
+        hoverX = padL + (W - afternoonW) + frac * afternoonW;
+      }
+    } else {
+      const xStep = W / Math.max(1, bars.length - 1);
+      hoverX = padL + idx * xStep;
+    }
+    if (Number.isFinite(hoverX)) {
+      canvas.__hoverInfo = { x: hoverX, bw };
+      if (!canvas.__hoverRaf) {
+        canvas.__hoverRaf = requestAnimationFrame(() => {
+          canvas.__hoverRaf = 0;
+          const card = canvas.closest(".chartCard");
+          if (card?.__redrawCandles) card.__redrawCandles();
+        });
+      }
+    }
     showTip(bar, evt.clientX, evt.clientY, rect);
   };
 
-  const onLeave = () => hideTip();
+  const onLeave = () => {
+    hideTip();
+    if (canvas.__hoverInfo) {
+      canvas.__hoverInfo = null;
+      const card = canvas.closest(".chartCard");
+      if (card?.__redrawCandles) card.__redrawCandles();
+    }
+  };
 
   canvas.addEventListener("mousemove", onMove);
   canvas.addEventListener("mouseleave", onLeave);
@@ -2984,11 +3460,23 @@ async function renderIndividualChartsFromHistory(symbol, records) {
           <span class="muted">freq=${escapeHtml(String($("marketMinPeriod").value || "1"))}</span>
           <span class="muted">•</span>
           <span class="chartTools">
-            <button class="toolBtn" type="button" data-act="zoom">Zoom</button>
+            <button class="toolBtn icon" type="button" data-act="zoom-in" aria-label="Zoom in">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" />
+                <path d="M12 8v8M8 12h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+              </svg>
+            </button>
+            <button class="toolBtn icon" type="button" data-act="zoom-out" aria-label="Zoom out">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" />
+                <path d="M8 12h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+              </svg>
+            </button>
             <button class="toolBtn" type="button" data-act="reset">Reset</button>
           </span>
         </div>
       </div>
+      <div class="chartLegend" aria-label="Moving averages"></div>
       <div class="chartWrap">
         <canvas id="candle_0" class="candle"></canvas>
         <div class="zoomBox"></div>
@@ -3006,28 +3494,28 @@ async function renderIndividualChartsFromHistory(symbol, records) {
   const { start, end } = shanghaiSafeBarsRangeFromRecords(candidates);
 
   let currentOhlc = [];
-  if (!isShanghaiTradingTimeNow()) {
+  const tradingNow = isShanghaiTradingTimeNow();
+  if (!tradingNow) {
     const card = document.getElementById("chartCard_0");
     const hint = card?.querySelector(".chartHint");
     if (hint) {
-      hint.innerHTML = `<span class="pill info">outside trading hours</span> <span class="muted">bars not fetched</span>`;
+      hint.innerHTML = `<span class="pill info">outside trading hours</span> <span class="muted">showing last available bars</span>`;
     }
-  } else {
-    try {
-      const payload = await fetchBarsFromApi(sym, start, end, freq, null); // no limit
-      currentOhlc = extractBarsFromBarsApiPayload(payload);
-    } catch (e) {
-      // Do not block trade history rendering if bars fail.
-      stopHistorySnapshotAutoRefresh();
-      const card = document.getElementById("chartCard_0");
-      const hint = card?.querySelector(".chartHint");
-      if (hint) {
-        hint.innerHTML = `<span class="pill bad">bars load failed</span> <span class="muted">${escapeHtml(String(e))}</span>`;
-      }
-      renderError(`Bars API failed: ${e}`, "", { symbol: sym, start, end, freq });
-      // Requirement: stop auto execute when bars API fails.
-      if (timer) stopAuto();
+  }
+  try {
+    const payload = await fetchBarsFromApi(sym, start, end, freq, null); // no limit
+    currentOhlc = extractBarsFromBarsApiPayload(payload);
+  } catch (e) {
+    // Do not block trade history rendering if bars fail.
+    stopHistorySnapshotAutoRefresh();
+    const card = document.getElementById("chartCard_0");
+    const hint = card?.querySelector(".chartHint");
+    if (hint) {
+      hint.innerHTML = `<span class="pill bad">bars load failed</span> <span class="muted">${escapeHtml(String(e))}</span>`;
     }
+    renderError(`Bars API failed: ${e}`, "", { symbol: sym, start, end, freq });
+    // Requirement: stop auto execute when bars API fails.
+    if (timer) stopAuto();
   }
 
   let currentMarkers = candidates
@@ -3065,7 +3553,8 @@ async function renderIndividualChartsFromHistory(symbol, records) {
       stopHistorySnapshotAutoRefresh();
       return;
     }
-    if (!isShanghaiTradingTimeNow()) return;
+    const inTrading = isShanghaiTradingTimeNow();
+    if (!inTrading && currentOhlc.length > 0) return;
     try {
       const nextCandidates = historyRecords.filter(r => isBuySellRecordForSymbol(r, sym));
       const range = shanghaiSafeBarsRangeFromRecords(nextCandidates);
@@ -3486,3 +3975,4 @@ async function renderIndividualChartsFromHistory(symbol, records) {
 </script>
 </body>
 </html>
+
