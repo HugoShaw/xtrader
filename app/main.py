@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date, time as dt_time
 import time
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -19,6 +19,7 @@ from app.logging_config import logger
 from app.services.cache import build_cache
 
 from app.storage.db import make_engine, make_session_factory, init_db, session_scope
+from app.storage.stock_bar_repo import StockBarRepo
 
 from app.services.market_data import build_market_provider
 from app.services.llm_client import OpenAICompatLLM
@@ -78,6 +79,7 @@ from app.storage.account_repo import TradeAccountRepo
 
 from app.utils.textutils import normalize_cn_symbol
 from app.utils.timeutils import now_shanghai, fmt_shanghai
+import pandas as pd
 
 # -------------------------
 # Auth helpers
@@ -1264,6 +1266,182 @@ async def clear_trade_history(
 # TODO: 增加隔日交易，隔周交易，和隔月交易的接口
 
 # -------------------------
+# Stock bars helpers
+# -------------------------
+def _parse_ymd(value: str) -> date:
+    s = str(value or "").strip()
+    if not s:
+        raise ValueError("start/end date required")
+    if "-" in s:
+        return datetime.strptime(s, "%Y-%m-%d").date()
+    if len(s) == 8 and s.isdigit():
+        return datetime.strptime(s, "%Y%m%d").date()
+    raise ValueError(f"Invalid date format: {value!r} (expect YYYYMMDD or YYYY-MM-DD)")
+
+def _ymd_str(value: str) -> str:
+    return _parse_ymd(value).strftime("%Y%m%d")
+
+def _parse_ts(value: str) -> datetime:
+    s = str(value or "").strip()
+    if not s:
+        raise ValueError("start/end timestamp required")
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            dt = datetime.strptime(s, fmt)
+            if fmt == "%Y-%m-%d":
+                return datetime.combine(dt.date(), dt_time(0, 0, 0))
+            return dt
+        except ValueError:
+            continue
+    raise ValueError(f"Invalid timestamp format: {value!r} (expect 'YYYY-MM-DD HH:MM:SS')")
+
+def _minute_period_key(freq: str) -> str:
+    return f"min{str(freq).strip()}"
+
+def _bars_df_from_rows(rows) -> pd.DataFrame:
+    if not rows:
+        return pd.DataFrame(columns=["open", "high", "low", "close", "volume", "amount", "vwap", "amplitude", "pct_change", "change", "turnover"])
+    data = []
+    for r in rows:
+        data.append(
+            {
+                "ts": r.ts,
+                "open": r.open,
+                "high": r.high,
+                "low": r.low,
+                "close": r.close,
+                "volume": r.volume,
+                "amount": r.amount,
+                "vwap": r.vwap,
+                "amplitude": r.amplitude,
+                "pct_change": r.pct_change,
+                "change": r.change,
+                "turnover": r.turnover,
+            }
+        )
+    df = pd.DataFrame(data)
+    df["ts"] = pd.to_datetime(df["ts"])
+    df = df.sort_values("ts").set_index("ts")
+    return df
+
+def _num_or_none(value):
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+def _rows_from_df(df: pd.DataFrame, *, symbol: str, period: str, adjust: str) -> list[dict]:
+    if df is None or df.empty:
+        return []
+    now = datetime.utcnow()
+    cols = df.reset_index().rename(columns={df.index.name or "index": "ts"})
+    rows: list[dict] = []
+    for _, row in cols.iterrows():
+        ts_val = pd.to_datetime(row["ts"]).to_pydatetime()
+        rows.append(
+            {
+                "symbol": symbol,
+                "period": period,
+                "adjust": adjust,
+                "ts": ts_val,
+                "open": _num_or_none(row.get("open")),
+                "high": _num_or_none(row.get("high")),
+                "low": _num_or_none(row.get("low")),
+                "close": _num_or_none(row.get("close")),
+                "volume": _num_or_none(row.get("volume")),
+                "amount": _num_or_none(row.get("amount")),
+                "vwap": _num_or_none(row.get("vwap")),
+                "amplitude": _num_or_none(row.get("amplitude")),
+                "pct_change": _num_or_none(row.get("pct_change")),
+                "change": _num_or_none(row.get("change")),
+                "turnover": _num_or_none(row.get("turnover")),
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+    return rows
+
+async def _load_period_payload(
+    *,
+    code: str,
+    start: str,
+    end: str,
+    period: str,
+    adjust: str,
+) -> dict:
+    start_date = _parse_ymd(start)
+    end_date = _parse_ymd(end)
+    if end_date < start_date:
+        raise ValueError("end must be >= start")
+
+    start_ymd = start_date.strftime("%Y%m%d")
+    end_ymd = end_date.strftime("%Y%m%d")
+
+    start_dt = datetime.combine(start_date, dt_time(0, 0, 0))
+    end_dt = datetime.combine(end_date, dt_time(0, 0, 0))
+
+    period_key = str(period or "daily").lower()
+    if period_key not in {"daily", "weekly", "monthly"}:
+        raise ValueError("period must be one of: daily, weekly, monthly")
+    adjust_key = str(adjust or "").strip()
+
+    today = now_shanghai().date()
+
+    async with session_scope(app.state.session_factory) as s:
+        repo = StockBarRepo(s)
+        min_ts, max_ts = await repo.get_min_max_ts(symbol=code, period=period_key, adjust=adjust_key)
+        fetch_log = await repo.get_fetch_log(symbol=code, period=period_key, adjust=adjust_key)
+
+    covered = bool(min_ts and max_ts and start_dt >= min_ts and end_dt <= max_ts)
+    fetched_today = bool(fetch_log and fetch_log.last_fetch_date == today)
+
+    if not covered and not fetched_today:
+        df_new = await run_in_threadpool(
+            fetch_cn_period_bars,
+            symbol=code,
+            start=start_ymd,
+            end=end_ymd,
+            period=period_key,
+            adjust=adjust_key,
+        )
+        rows = _rows_from_df(df_new, symbol=code, period=period_key, adjust=adjust_key)
+        async with session_scope(app.state.session_factory) as s:
+            repo = StockBarRepo(s)
+            await repo.upsert_bars(rows)
+            await repo.upsert_fetch_log(
+                symbol=code,
+                period=period_key,
+                adjust=adjust_key,
+                fetch_date=today,
+                fetch_start=start_ymd,
+                fetch_end=end_ymd,
+            )
+
+    async with session_scope(app.state.session_factory) as s:
+        repo = StockBarRepo(s)
+        rows = await repo.get_range(
+            symbol=code,
+            period=period_key,
+            adjust=adjust_key,
+            start_dt=start_dt,
+            end_dt=end_dt,
+        )
+
+    df = _bars_df_from_rows(rows)
+    payload = bars_to_payload(df)
+    payload.update({
+        "symbol": code,
+        "start": start_ymd,
+        "end": end_ymd,
+        "period": period_key,
+        "adjust": adjust_key,
+        "count": len(df),
+    })
+    return payload
+
+# -------------------------
 # Stock bars endpoint
 # -------------------------
 @app.get("/api/stock/bars", tags=["trading"])
@@ -1277,14 +1455,64 @@ async def api_stock_bars(
 ):
     code = normalize_cn_symbol(symbol)
     try:
-        df = await run_in_threadpool(
-            fetch_cn_minute_bars,
-            symbol=code,
-            start=start,
-            end=end,
-            freq=freq,
-            limit=limit,
-        )
+        async with session_scope(app.state.session_factory) as s:
+            usage_repo = ApiUsageRepo(s)
+            today_count = await usage_repo.count_path_user_today(
+                path="/api/stock/bars",
+                username=str(user.username),
+                method="GET",
+            )
+        if today_count >= 50:
+            raise HTTPException(status_code=429, detail="stock_bars_rate_limit: daily per-user limit reached (50)")
+
+        start_dt = _parse_ts(start)
+        end_dt = _parse_ts(end)
+        if end_dt < start_dt:
+            raise ValueError("end must be >= start")
+
+        period_key = _minute_period_key(freq)
+        adjust = ""
+
+        async with session_scope(app.state.session_factory) as s:
+            repo = StockBarRepo(s)
+            max_ts = await repo.get_max_ts(symbol=code, period=period_key, adjust=adjust)
+
+        fetch_start_dt = None
+        if max_ts is None:
+            fetch_start_dt = start_dt
+        elif max_ts < end_dt:
+            fetch_start_dt = max(start_dt, max_ts + timedelta(minutes=int(freq)))
+
+        if fetch_start_dt is not None and fetch_start_dt <= end_dt:
+            df_new = await run_in_threadpool(
+                fetch_cn_minute_bars,
+                symbol=code,
+                start=fetch_start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                end=end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+                freq=freq,
+                limit=None,
+            )
+            rows = _rows_from_df(df_new, symbol=code, period=period_key, adjust=adjust)
+            async with session_scope(app.state.session_factory) as s:
+                repo = StockBarRepo(s)
+                await repo.upsert_bars(rows)
+
+        async with session_scope(app.state.session_factory) as s:
+            repo = StockBarRepo(s)
+            rows = await repo.get_range(
+                symbol=code,
+                period=period_key,
+                adjust=adjust,
+                start_dt=start_dt,
+                end_dt=end_dt,
+            )
+
+        df = _bars_df_from_rows(rows)
+        if limit is not None:
+            limit = int(limit)
+            if limit > 0 and len(df) > limit:
+                df = df.tail(limit)
+
         payload = bars_to_payload(df)
         payload.update({
             "symbol": code,
@@ -1313,22 +1541,13 @@ async def api_stock_daily(
 ):
     code = normalize_cn_symbol(symbol)
     try:
-        df = await run_in_threadpool(
-            fetch_cn_daily_bars,
-            symbol=code,
+        return await _load_period_payload(
+            code=code,
             start=start,
             end=end,
+            period="daily",
             adjust=adjust,
         )
-        payload = bars_to_payload(df)
-        payload.update({
-            "symbol": code,
-            "start": start,
-            "end": end,
-            "adjust": adjust,
-            "count": len(df),
-        })
-        return payload
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"stock_daily_error: {e}")
 
@@ -1344,24 +1563,13 @@ async def api_stock_period(
 ):
     code = normalize_cn_symbol(symbol)
     try:
-        df = await run_in_threadpool(
-            fetch_cn_period_bars,
-            symbol=code,
+        return await _load_period_payload(
+            code=code,
             start=start,
             end=end,
             period=period,
             adjust=adjust,
         )
-        payload = bars_to_payload(df)
-        payload.update({
-            "symbol": code,
-            "start": start,
-            "end": end,
-            "period": period,
-            "adjust": adjust,
-            "count": len(df),
-        })
-        return payload
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"stock_period_error: {e}")
 

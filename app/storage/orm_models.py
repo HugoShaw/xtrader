@@ -140,3 +140,61 @@ class TradePositionORM(Base):
 
 Index("ix_trade_positions_account_symbol", TradePositionORM.account_pk, TradePositionORM.symbol, unique=True)
 Index("ix_trade_positions_user_symbol", TradePositionORM.user_id, TradePositionORM.symbol)
+
+
+class StockBarORM(Base):
+    __tablename__ = "stock_bars"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    period: Mapped[str] = mapped_column(String(16), index=True)
+    adjust: Mapped[str] = mapped_column(String(8), default="")
+    ts: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+    open: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    high: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    low: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    close: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    volume: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    amount: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    vwap: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    amplitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    pct_change: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    change: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    turnover: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+Index("ix_stock_bars_symbol_period", StockBarORM.symbol, StockBarORM.period)
+Index(
+    "ix_stock_bars_symbol_period_adjust_ts",
+    StockBarORM.symbol,
+    StockBarORM.period,
+    StockBarORM.adjust,
+    StockBarORM.ts,
+    unique=True,
+)
+
+
+class StockBarFetchORM(Base):
+    __tablename__ = "stock_bar_fetches"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    period: Mapped[str] = mapped_column(String(16), index=True)
+    adjust: Mapped[str] = mapped_column(String(8), default="")
+    last_fetch_date: Mapped[date] = mapped_column(Date, index=True)
+    last_fetch_start: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    last_fetch_end: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+Index(
+    "ix_stock_bar_fetch_symbol_period_adjust",
+    StockBarFetchORM.symbol,
+    StockBarFetchORM.period,
+    StockBarFetchORM.adjust,
+    unique=True,
+)

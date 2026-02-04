@@ -61,3 +61,15 @@ class ApiUsageRepo:
         )
         rows = (await self.s.execute(stmt)).all()
         return [{"username": str(username), "count": int(count or 0)} for username, count in rows]
+
+    async def count_path_user_today(self, *, path: str, username: str, method: str = "GET") -> int:
+        start_dt = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        stmt = (
+            select(func.count(ApiUsageORM.id))
+            .where(ApiUsageORM.created_at >= start_dt)
+            .where(ApiUsageORM.path == str(path))
+            .where(ApiUsageORM.method == str(method).upper())
+            .where(ApiUsageORM.username == str(username))
+        )
+        val = (await self.s.execute(stmt)).scalar_one_or_none()
+        return int(val or 0)

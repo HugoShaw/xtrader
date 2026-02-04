@@ -68,6 +68,10 @@ def fetch_cn_minute_bars(
         ("\u6210\u4ea4\u91cf", "volume"),
         ("\u6210\u4ea4\u989d", "amount"),
         ("\u5747\u4ef7", "vwap"),
+        ("\u6da8\u8dcc\u5e45", "pct_change"),
+        ("\u6da8\u8dcc\u989d", "change"),
+        ("\u632f\u5e45", "amplitude"),
+        ("\u6362\u624b\u7387", "turnover"),
     ]
     for cn, en in pairs:
         if cn in df.columns:
@@ -77,7 +81,7 @@ def fetch_cn_minute_bars(
     if "close" not in df.columns and "\u6700\u65b0\u4ef7" in df.columns:
         df["close"] = pd.to_numeric(df["\u6700\u65b0\u4ef7"], errors="coerce")
 
-    for col in ["open", "high", "low", "close", "volume", "amount", "vwap"]:
+    for col in ["open", "high", "low", "close", "volume", "amount", "vwap", "pct_change", "change", "amplitude", "turnover"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
@@ -131,6 +135,10 @@ def fetch_cn_daily_bars(
         ("\u6536\u76d8", "close"),
         ("\u6210\u4ea4\u91cf", "volume"),
         ("\u6210\u4ea4\u989d", "amount"),
+        ("\u632f\u5e45", "amplitude"),
+        ("\u6da8\u8dcc\u5e45", "pct_change"),
+        ("\u6da8\u8dcc\u989d", "change"),
+        ("\u6362\u624b\u7387", "turnover"),
     ]
     for cn, en in pairs:
         if cn in df.columns:
@@ -140,7 +148,7 @@ def fetch_cn_daily_bars(
     if "close" not in df.columns:
         raise ValueError(f"Unexpected columns (missing close): {list(df.columns)}")
 
-    for col in ["open", "high", "low", "close", "volume", "amount"]:
+    for col in ["open", "high", "low", "close", "volume", "amount", "amplitude", "pct_change", "change", "turnover"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
@@ -154,7 +162,23 @@ def bars_to_payload(df: pd.DataFrame) -> Dict[str, Any]:
     Keeps keys aligned with Bar model / prompt usage:
       open/high/low/close/volume/amount/vwap
     """
-    cols = [c for c in ["open", "high", "low", "close", "volume", "amount", "vwap"] if c in df.columns]
+    cols = [
+        c
+        for c in [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "amount",
+            "vwap",
+            "amplitude",
+            "pct_change",
+            "change",
+            "turnover",
+        ]
+        if c in df.columns
+    ]
     out = df[cols].copy()
 
     out = out.reset_index().rename(columns={out.index.name or "index": "ts"})
@@ -171,7 +195,7 @@ def fetch_cn_period_bars(
     symbol: str,
     start: str,
     end: str,
-    period: Literal["daily", "weekly", "monthly", "quarterly"] = "daily",
+    period: Literal["daily", "weekly", "monthly"] = "daily",
     adjust: str = "",
 ) -> pd.DataFrame:
     """
@@ -207,6 +231,10 @@ def fetch_cn_period_bars(
         ("\u6536\u76d8", "close"),
         ("\u6210\u4ea4\u91cf", "volume"),
         ("\u6210\u4ea4\u989d", "amount"),
+        ("\u632f\u5e45", "amplitude"),
+        ("\u6da8\u8dcc\u5e45", "pct_change"),
+        ("\u6da8\u8dcc\u989d", "change"),
+        ("\u6362\u624b\u7387", "turnover"),
     ]
     for cn, en in pairs:
         if cn in df.columns:
@@ -216,7 +244,7 @@ def fetch_cn_period_bars(
     if "close" not in df.columns:
         raise ValueError(f"Unexpected columns (missing close): {list(df.columns)}")
 
-    for col in ["open", "high", "low", "close", "volume", "amount"]:
+    for col in ["open", "high", "low", "close", "volume", "amount", "amplitude", "pct_change", "change", "turnover"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
