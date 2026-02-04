@@ -17,6 +17,21 @@ def _to_float(x) -> Optional[float]:
         return None
 
 
+def _to_python_scalar(v: Any) -> Any:
+    if v is None:
+        return None
+    if isinstance(v, float) and pd.isna(v):
+        return None
+    if isinstance(v, (int, float, str, bool)):
+        return v
+    try:
+        if hasattr(v, "item"):
+            return v.item()
+    except Exception:
+        pass
+    return str(v)
+
+
 def fetch_cn_minute_bars(
     *,
     symbol: str,
@@ -250,3 +265,25 @@ def fetch_cn_period_bars(
 
     df = df.dropna(subset=["close"])
     return df
+
+
+def fetch_cn_stock_basic_info(*, symbol: str) -> Dict[str, Any]:
+    """
+    Fetch A-share basic info via AkShare/Eastmoney.
+    Returns a dict keyed by 'item' with normalized python scalars.
+    """
+    df = ak.stock_individual_info_em(symbol=symbol.strip())
+    if df is None or df.empty:
+        raise ValueError("No stock basic info returned.")
+
+    item_col = "item" if "item" in df.columns else None
+    value_col = "value" if "value" in df.columns else None
+    if item_col is None or value_col is None:
+        raise ValueError(f"Unexpected columns: {list(df.columns)}")
+
+    out: Dict[str, Any] = {}
+    for _, row in df.iterrows():
+        key = str(row[item_col]).strip()
+        val = _to_python_scalar(row[value_col])
+        out[key] = val
+    return out

@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -248,6 +248,59 @@
       color: var(--muted);
     }
 
+    .symbol-cell {
+      cursor: help;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      text-decoration: underline dotted;
+      text-underline-offset: 3px;
+    }
+
+    .rich-tooltip {
+      position: fixed;
+      min-width: 220px;
+      max-width: 320px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(16,19,28,0.12);
+      background: rgba(255,255,255,0.97);
+      box-shadow: var(--shadow);
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--ink);
+      white-space: pre-line;
+      opacity: 0;
+      transform: translateY(6px);
+      pointer-events: none;
+      transition: opacity .15s ease, transform .15s ease;
+      z-index: 1000;
+    }
+
+    .rich-tooltip.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .rich-tooltip::before {
+      content: "";
+      position: absolute;
+      left: var(--arrow-left, 18px);
+      top: -6px;
+      width: 10px;
+      height: 10px;
+      background: rgba(255,255,255,0.97);
+      border-left: 1px solid rgba(16,19,28,0.12);
+      border-top: 1px solid rgba(16,19,28,0.12);
+      transform: rotate(45deg);
+    }
+
+    .rich-tooltip.above::before {
+      top: auto;
+      bottom: -6px;
+      transform: rotate(225deg);
+    }
+
     .pill {
       display: inline-flex;
       align-items: center;
@@ -303,7 +356,7 @@
     }
 
     .fold[open] summary::after {
-      content: "–";
+      content: "-";
     }
 
     .fold-body {
@@ -381,17 +434,15 @@
       <div class="nav-links">
         <a class="nav-link" href="/">Home</a>
         <a class="nav-link" href="/agent/analyst">Analyst</a>
+        <a class="nav-link" href="/signal">Signal</a>
+        <a class="nav-link" href="/execute">Execute</a>
+        <a class="nav-link" href="/expert">Expert</a>
         <span id="navUser" class="pill" style="display:none;"></span>
         <a id="navLogin" class="nav-link primary" href="/login">Login</a>
         <a id="navLogout" class="nav-link accent" href="/logout" style="display:none;">Logout</a>
       </div>
     </nav>
-    <header>
-      <div class="eyebrow">Profile · Trade Accounts</div>
-      <h1>Account management dashboard</h1>
-      <p class="subtitle">Maintain personal trade account states, manage positions, and keep cash + PnL up to date.</p>
-      <div id="userLine" class="pill">Loading profile…</div>
-    </header>
+    <div id="userLine" class="pill" style="display:none;"></div>
 
     <section class="layout">
       <div class="panel">
@@ -550,6 +601,7 @@
     </section>
 
     <div class="note">This dashboard is tied to your personal user profile. Only you can view or edit your accounts.</div>
+    <div id="richTooltip" class="rich-tooltip" style="display:none;"></div>
   </div>
 
   <script>
@@ -572,6 +624,7 @@
       positions: [],
       editingSymbol: null,
       newPositions: [],
+      basicInfo: {},
     };
 
     const els = {
@@ -598,6 +651,7 @@
       newPosAvgCost: document.getElementById("newPosAvgCost"),
       newPosUnrealized: document.getElementById("newPosUnrealized"),
       newPositionsTable: document.getElementById("newPositionsTable"),
+      richTooltip: document.getElementById("richTooltip"),
     };
 
     function money(v) {
@@ -610,6 +664,101 @@
     function numberOrZero(value) {
       const num = Number(value);
       return Number.isNaN(num) ? 0 : num;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function formatBasicInfoTooltip(info) {
+      if (!info) {
+        return "加载中：股票基本信息";
+      }
+      if (info.error) {
+        return `基础信息不可用：${info.error}`;
+      }
+      const data = info.data || {};
+      const name = data["股票简称"] || data["股票名称"] || data["名称"] || "--";
+      const industry = data["行业"] || "--";
+      const listed = data["上市时间"] || "--";
+      const marketCapRaw = data["总市值"] || data["流通市值"] || "--";
+
+      function toNumber(v) {
+        if (v === null || v === undefined) return NaN;
+        if (typeof v === "number") return v;
+        const s = String(v).replace(/,/g, "").trim();
+        const num = Number(s);
+        return Number.isNaN(num) ? NaN : num;
+      }
+
+      function toYi(v) {
+        const num = toNumber(v);
+        if (Number.isNaN(num)) return String(v);
+        return `${(num / 1e8).toFixed(2)}亿`;
+      }
+
+      const marketCap = marketCapRaw === "--" ? "--" : toYi(marketCapRaw);
+
+      return [
+        `股票：${name}`,
+        `行业：${industry}`,
+        `上市：${listed}`,
+        `市值：${marketCap}`,
+      ].join("\n");
+    }
+
+    function showTooltip(target, text) {
+      if (!els.richTooltip) return;
+      els.richTooltip.textContent = text;
+      els.richTooltip.style.display = "block";
+      els.richTooltip.classList.add("show");
+      els.richTooltip.classList.remove("above");
+
+      const rect = target.getBoundingClientRect();
+      const tipRect = els.richTooltip.getBoundingClientRect();
+      const padding = 12;
+
+      let left = rect.left;
+      let top = rect.bottom + 12;
+      let placedAbove = false;
+
+      if (left + tipRect.width > window.innerWidth - padding) {
+        left = window.innerWidth - padding - tipRect.width;
+      }
+      if (left < padding) {
+        left = padding;
+      }
+
+      if (top + tipRect.height > window.innerHeight - padding) {
+        top = rect.top - 12 - tipRect.height;
+        placedAbove = true;
+      }
+      if (top < padding) {
+        top = padding;
+      }
+
+      els.richTooltip.style.left = `${Math.round(left)}px`;
+      els.richTooltip.style.top = `${Math.round(top)}px`;
+
+      const arrowLeft = Math.min(
+        Math.max(rect.left - left + 16, 12),
+        tipRect.width - 18
+      );
+      els.richTooltip.style.setProperty("--arrow-left", `${arrowLeft}px`);
+      if (placedAbove) {
+        els.richTooltip.classList.add("above");
+      }
+    }
+
+    function hideTooltip() {
+      if (!els.richTooltip) return;
+      els.richTooltip.classList.remove("show");
+      els.richTooltip.style.display = "none";
     }
 
     function calcPositionsCost(positions) {
@@ -697,8 +846,9 @@
       els.positionsTable.innerHTML = "";
       state.positions.forEach((pos) => {
         const row = document.createElement("tr");
+        const tooltip = formatBasicInfoTooltip(state.basicInfo[pos.symbol]);
         row.innerHTML = `
-          <td>${pos.symbol}</td>
+          <td><span class="symbol-cell" data-tooltip="${escapeHtml(tooltip)}">${pos.symbol}</span></td>
           <td>${pos.shares}</td>
           <td>${money(pos.avg_cost_cny)}</td>
           <td style="color:${(Number(pos.unrealized_pnl_cny) || 0) >= 0 ? '#0e6a3d' : '#912a2a'}">${money(pos.unrealized_pnl_cny)}</td>
@@ -707,11 +857,37 @@
             <button class="btn danger" data-action="delete">Delete</button>
           </td>
         `;
+        const symbolEl = row.querySelector(".symbol-cell");
+        if (symbolEl) {
+          symbolEl.addEventListener("mouseenter", () => showTooltip(symbolEl, tooltip));
+          symbolEl.addEventListener("mousemove", () => showTooltip(symbolEl, tooltip));
+          symbolEl.addEventListener("mouseleave", hideTooltip);
+          symbolEl.addEventListener("focus", () => showTooltip(symbolEl, tooltip));
+          symbolEl.addEventListener("blur", hideTooltip);
+        }
         row.querySelector("[data-action='edit']").addEventListener("click", () => loadPosition(pos));
         row.querySelector("[data-action='delete']").addEventListener("click", () => deletePosition(pos.symbol));
         els.positionsTable.appendChild(row);
       });
       els.positionSummary.textContent = `${state.positions.length} positions`;
+    }
+
+    async function loadBasicInfoForPositions() {
+      const symbols = Array.from(new Set(state.positions.map((p) => p.symbol)));
+      const missing = symbols.filter((symbol) => !state.basicInfo[symbol]);
+      if (!missing.length) return;
+
+      await Promise.all(
+        missing.map(async (symbol) => {
+          try {
+            const info = await api(`/api/stock/basic?symbol=${encodeURIComponent(symbol)}`);
+            state.basicInfo[symbol] = info;
+          } catch (err) {
+            state.basicInfo[symbol] = { error: err.message || "Failed to load" };
+          }
+        })
+      );
+      renderPositions();
     }
 
     function renderNewPositions() {
@@ -786,6 +962,7 @@
       renderAccounts();
       renderDetails();
       renderPositions();
+      loadBasicInfoForPositions().catch((e) => console.warn(e));
       resetPositionForm();
     }
 
@@ -903,20 +1080,26 @@
       try {
         const me = await api("/auth/me");
         if (me && me.user) {
-          els.userLine.textContent = `Logged in as ${me.user.username}`;
+          if (els.userLine) {
+            els.userLine.textContent = `Logged in as ${me.user.username}`;
+          }
           els.navUser.textContent = me.user.username;
           els.navUser.style.display = "inline-flex";
           els.navLogin.style.display = "none";
           els.navLogout.style.display = "inline-flex";
         } else {
-          els.userLine.textContent = "Logged in";
+          if (els.userLine) {
+            els.userLine.textContent = "Logged in";
+          }
           els.navUser.textContent = "";
           els.navUser.style.display = "none";
           els.navLogin.style.display = "inline-flex";
           els.navLogout.style.display = "none";
         }
       } catch (err) {
-        els.userLine.textContent = "Login required";
+        if (els.userLine) {
+          els.userLine.textContent = "Login required";
+        }
         els.navUser.textContent = "";
         els.navUser.style.display = "none";
         els.navLogin.style.display = "inline-flex";

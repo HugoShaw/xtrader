@@ -142,6 +142,36 @@ Index("ix_trade_positions_account_symbol", TradePositionORM.account_pk, TradePos
 Index("ix_trade_positions_user_symbol", TradePositionORM.user_id, TradePositionORM.symbol)
 
 
+class StockBasicInfoORM(Base):
+    __tablename__ = "stock_basic_info"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    source: Mapped[str] = mapped_column(String(64), default="stock_individual_info_em")
+    data_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class StockBasicInfoFetchORM(Base):
+    __tablename__ = "stock_basic_info_fetches"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True, default=0)
+    symbol: Mapped[str] = mapped_column(String(16), index=True)
+    fetch_date: Mapped[date] = mapped_column(Date, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+Index(
+    "ix_stock_basic_info_fetch_user_symbol_day",
+    StockBasicInfoFetchORM.user_id,
+    StockBasicInfoFetchORM.symbol,
+    StockBasicInfoFetchORM.fetch_date,
+    unique=True,
+)
+
+
 class StockBarORM(Base):
     __tablename__ = "stock_bars"
 

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, date, time as dt_time
 import time
 from contextlib import asynccontextmanager
 from typing import Optional
+import json
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse
@@ -20,6 +21,7 @@ from app.services.cache import build_cache
 
 from app.storage.db import make_engine, make_session_factory, init_db, session_scope
 from app.storage.stock_bar_repo import StockBarRepo
+from app.storage.stock_basic_info_repo import StockBasicInfoRepo
 
 from app.services.market_data import build_market_provider
 from app.services.llm_client import OpenAICompatLLM
@@ -28,7 +30,13 @@ from app.services.broker import PaperBroker
 from app.services.strategy import StrategyEngine
 from app.services.trade_history_db import TradeHistoryDB
 from app.services.backtest import BacktestParams, run_backtest, build_report_html
-from app.services.stock_api import fetch_cn_minute_bars, fetch_cn_daily_bars, fetch_cn_period_bars, bars_to_payload
+from app.services.stock_api import (
+    fetch_cn_minute_bars,
+    fetch_cn_daily_bars,
+    fetch_cn_period_bars,
+    fetch_cn_stock_basic_info,
+    bars_to_payload,
+)
 from app.services.stock_expert import (
     build_symbol_plans,
     combine_action,
@@ -73,6 +81,7 @@ from app.models_account import (
     TradePositionUpdate,
     TradePositionOut,
 )
+from app.models_stock_basic import StockBasicInfoOut
 from app.storage.auth_repo import UserRepo
 from app.storage.usage_repo import ApiUsageRepo
 from app.storage.account_repo import TradeAccountRepo
@@ -344,6 +353,11 @@ async def expert_page(user: AuthenticatedUser = Depends(require_user)):
     return html_path.read_text(encoding="utf-8")
 
 
+@app.get("/expert", response_class=HTMLResponse, tags=["agent-ui"])
+async def expert_alias_page(user: AuthenticatedUser = Depends(require_user)):
+    return await expert_page(user)
+
+
 @app.get("/admin/users", response_model=AdminUserList, tags=["admin"])
 async def admin_list_users(
     q: Optional[str] = Query(None, description="Search by username"),
@@ -457,6 +471,21 @@ def _position_out(pos) -> TradePositionOut:
         unrealized_pnl_cny=float(pos.unrealized_pnl_cny) if pos.unrealized_pnl_cny is not None else None,
         created_at=_fmt_dt(pos.created_at),
         updated_at=_fmt_dt(pos.updated_at),
+    )
+
+
+def _stock_basic_info_out(info) -> StockBasicInfoOut:
+    data = {}
+    if info and info.data_json:
+        try:
+            data = json.loads(info.data_json)
+        except Exception:
+            data = {}
+    return StockBasicInfoOut(
+        symbol=str(info.symbol),
+        asof=_fmt_dt(info.updated_at),
+        source=str(info.source or "stock_individual_info_em"),
+        data=data,
     )
 
 
@@ -1123,6 +1152,11 @@ async def signal_ui_page(user: AuthenticatedUser = Depends(require_user)):
         )
     return html_path.read_text(encoding="utf-8")
 
+
+@app.get("/signal", response_class=HTMLResponse, tags=["ui"])
+async def signal_page(user: AuthenticatedUser = Depends(require_user)):
+    return await signal_ui_page(user)
+
 @app.post("/signal/{symbol}", tags=["trading"])
 async def signal(
     symbol: str,
@@ -1178,6 +1212,11 @@ async def ui_execute():
             detail="execute.html not found. Create /static/execute.html at repo root.",
         )
     return HTMLResponse(html_path.read_text(encoding="utf-8"))
+
+
+@app.get("/execute", response_class=HTMLResponse, tags=["ui"])
+async def execute_page():
+    return await ui_execute()
 
 @app.post("/execute/{symbol}", tags=["trading"])
 async def execute(
@@ -1444,6 +1483,53 @@ async def _load_period_payload(
 # -------------------------
 # Stock bars endpoint
 # -------------------------
+@app.get("/api/stock/basic", response_model=StockBasicInfoOut, tags=["trading"])
+async def api_stock_basic(symbol: str, user: AuthenticatedUser = Depends(require_user)):
+    code = normalize_cn_symbol(symbol)
+    today = now_shanghai().date()
+    async with session_scope(app.state.session_factory) as s:
+        repo = StockBasicInfoRepo(s)
+        cached = await repo.get_info(symbol=code)
+        fetch_log = await repo.get_fetch_log(user_id=int(user.id), symbol=code, fetch_date=today)
+
+        if cached and fetch_log:
+            return _stock_basic_info_out(cached)
+
+        if cached and cached.updated_at and cached.updated_at.date() == today and not fetch_log:
+            return _stock_basic_info_out(cached)
+
+        if not fetch_log:
+            try:
+                info = await run_in_threadpool(fetch_cn_stock_basic_info, symbol=code)
+            except Exception as e:
+                logger.exception("stock_basic_info_error | symbol=%s", code)
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"stock_basic_info_unavailable: {type(e).__name__}: {e}",
+                )
+            data_json = json.dumps(info, ensure_ascii=False)
+            await repo.upsert_info(
+                symbol=code,
+                source="stock_individual_info_em",
+                data_json=data_json,
+            )
+            await repo.add_fetch_log(user_id=int(user.id), symbol=code, fetch_date=today)
+            return StockBasicInfoOut(
+                symbol=code,
+                asof=_fmt_dt(now_shanghai()),
+                source="stock_individual_info_em",
+                data=info,
+            )
+
+        if cached:
+            return _stock_basic_info_out(cached)
+
+        raise HTTPException(
+            status_code=429,
+            detail="stock_basic_info_rate_limit: daily per-user limit reached",
+        )
+
+
 @app.get("/api/stock/bars", tags=["trading"])
 async def api_stock_bars(
     symbol: str,
