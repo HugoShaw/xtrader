@@ -646,6 +646,13 @@
       return data;
     });
 
+    let apiQueue = Promise.resolve();
+
+    function apiRateLimited(path, opts = {}) {
+      apiQueue = apiQueue.then(() => api(path, opts));
+      return apiQueue;
+    }
+
     const els = {
       accountSelect: document.getElementById("accountSelect"),
       lookbackInput: document.getElementById("lookbackInput"),
@@ -675,6 +682,7 @@
     const AUTH_KEY = "xtrader.expert.auth.v1";
     const EXEC_KEY = "xtrader.expert.execute.v1";
     const EXPERT_CACHE_KEY = "xtrader.expert.cache.v1";
+    const PERIOD_CACHE_KEY = "xtrader.expert.period_cache.v1";
     const AUTO_RUN_KEY = "xtrader.expert.auto.v1";
     const AUTO_RUN_INTERVAL_KEY = "xtrader.expert.auto.interval.v1";
     let autoRunTimer = null;
@@ -1294,6 +1302,32 @@
       return `${y}-${m}-${d}`;
     }
 
+    function periodCacheKey({ symbol, period, adjust, startStr, endStr }) {
+      return `${symbol}|${period}|${adjust}|${startStr}|${endStr}`;
+    }
+
+    function loadPeriodCache(key) {
+      try {
+        const raw = localStorage.getItem(PERIOD_CACHE_KEY);
+        if (!raw) return null;
+        const obj = JSON.parse(raw);
+        return obj && obj[key] ? obj[key] : null;
+      } catch {
+        return null;
+      }
+    }
+
+    function savePeriodCache(key, payload) {
+      try {
+        const raw = localStorage.getItem(PERIOD_CACHE_KEY);
+        const obj = raw ? JSON.parse(raw) : {};
+        obj[key] = { saved_at: Date.now(), payload };
+        localStorage.setItem(PERIOD_CACHE_KEY, JSON.stringify(obj));
+      } catch {
+        // ignore cache errors
+      }
+    }
+
     async function renderCandlesForSymbol(symbol, canvasId, period = "minute", markers = null) {
       const canvas = document.getElementById(canvasId);
       if (!canvas) return;
@@ -1307,7 +1341,7 @@
         const startStr = `${y}-${m}-${d} 09:30:00`;
         const endStr = `${y}-${m}-${d} 15:00:00`;
         try {
-          payload = await api(`/api/stock/bars?symbol=${encodeURIComponent(symbol)}&start=${encodeURIComponent(startStr)}&end=${encodeURIComponent(endStr)}&freq=1`);
+          payload = await apiRateLimited(`/api/stock/bars?symbol=${encodeURIComponent(symbol)}&start=${encodeURIComponent(startStr)}&end=${encodeURIComponent(endStr)}&freq=1`);
         } catch (err) {
           if (wrap) {
             wrap.setAttribute("data-error", "rate");
@@ -1321,14 +1355,26 @@
         const start = periodStartDate(lookbackDays);
         const startStr = formatYmdDash(start);
         const endStr = formatYmdDash(end);
-        try {
-          payload = await api(`/api/stock/period?symbol=${encodeURIComponent(symbol)}&start=${encodeURIComponent(startStr)}&end=${encodeURIComponent(endStr)}&period=${encodeURIComponent(period)}&adjust=qfq`);
-        } catch (err) {
-          if (wrap) {
-            wrap.setAttribute("data-error", "rate");
-            wrap.insertAdjacentHTML("beforeend", `<div class="muted">Historical bars unavailable (provider limit). Try again later.</div>`);
+        const adjust = els.adjustSelect.value || "qfq";
+        const cacheKey = periodCacheKey({ symbol, period, adjust, startStr, endStr });
+        const cached = loadPeriodCache(cacheKey);
+        if (cached && cached.payload) {
+          payload = cached.payload;
+        } else {
+          try {
+            payload = await apiRateLimited(`/api/stock/period?symbol=${encodeURIComponent(symbol)}&start=${encodeURIComponent(startStr)}&end=${encodeURIComponent(endStr)}&period=${encodeURIComponent(period)}&adjust=${encodeURIComponent(adjust)}`);
+            if (payload) {
+              savePeriodCache(cacheKey, payload);
+            }
+          } catch (err) {
+            if (cached && cached.payload) {
+              payload = cached.payload;
+            } else if (wrap) {
+              wrap.setAttribute("data-error", "rate");
+              wrap.insertAdjacentHTML("beforeend", `<div class="muted">Historical bars unavailable (provider limit). Try again later.</div>`);
+              return;
+            }
           }
-          return;
         }
       }
       const bars = payload?.bars || [];

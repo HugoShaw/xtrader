@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from datetime import datetime, timedelta, date, time as dt_time
+import math
 import time
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -453,6 +454,38 @@ async def admin_api_usage(
 def _fmt_dt(dt) -> Optional[str]:
     return dt.isoformat() if dt else None
 
+def _sanitize_json(obj):
+    if obj is None:
+        return None
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, (int, str, bool)):
+        return obj
+    if isinstance(obj, dict):
+        return {k: _sanitize_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_json(v) for v in obj]
+    return obj
+
+async def _enforce_daily_period_limit(*, user_id: int, period_key: str) -> None:
+    cache = app.state.cache
+    now = now_shanghai()
+    end_of_day = now.replace(hour=23, minute=59, second=59, microsecond=0)
+    ttl_sec = max(int((end_of_day - now).total_seconds()) + 1, 60)
+
+    key = f"rl:stock_period:{user_id}:{period_key}"
+    current = await cache.get(key)
+    try:
+        current_i = int(current or 0)
+    except Exception:
+        current_i = 0
+    if current_i >= 1:
+        raise HTTPException(
+            status_code=429,
+            detail=f"stock_period_rate_limit: daily per-user limit reached for {period_key}",
+        )
+    await cache.set(key, current_i + 1, ttl_sec)
+
 def _account_out(acc) -> TradeAccountOut:
     return TradeAccountOut(
         account_id=str(acc.account_id),
@@ -693,12 +726,55 @@ async def agent_stock_strategy(
         if req.bar_type == "daily":
             start_day = start_dt.strftime("%Y%m%d")
             end_day = end_dt.strftime("%Y%m%d")
-            df = await run_in_threadpool(
-                fetch_cn_daily_bars,
-                symbol=symbol,
-                start=start_day,
-                end=end_day,
-            )
+            period_key = "daily"
+            adjust_key = ""
+            async with session_scope(app.state.session_factory) as s:
+                repo = StockBarRepo(s)
+                min_ts, max_ts = await repo.get_min_max_ts(
+                    symbol=symbol,
+                    period=period_key,
+                    adjust=adjust_key,
+                )
+
+            has_any_data = bool(min_ts and max_ts)
+            if not has_any_data:
+                df_new = await run_in_threadpool(
+                    fetch_cn_daily_bars,
+                    symbol=symbol,
+                    start=start_day,
+                    end=end_day,
+                )
+                rows = _rows_from_df(df_new, symbol=symbol, period=period_key, adjust=adjust_key)
+                async with session_scope(app.state.session_factory) as s:
+                    repo = StockBarRepo(s)
+                    await repo.upsert_bars(rows)
+                    await repo.upsert_fetch_log(
+                        symbol=symbol,
+                        period=period_key,
+                        adjust=adjust_key,
+                        fetch_date=now.date(),
+                        fetch_start=start_day,
+                        fetch_end=end_day,
+                    )
+
+            async with session_scope(app.state.session_factory) as s:
+                repo = StockBarRepo(s)
+                rows = await repo.get_range(
+                    symbol=symbol,
+                    period=period_key,
+                    adjust=adjust_key,
+                    start_dt=start_dt,
+                    end_dt=end_dt,
+                )
+                if not rows and has_any_data and min_ts and max_ts:
+                    rows = await repo.get_range(
+                        symbol=symbol,
+                        period=period_key,
+                        adjust=adjust_key,
+                        start_dt=min_ts,
+                        end_dt=max_ts,
+                    )
+            df = _bars_df_from_rows(rows)
         else:
             df = await run_in_threadpool(
                 fetch_cn_minute_bars,
@@ -1469,6 +1545,15 @@ async def _load_period_payload(
         )
 
     df = _bars_df_from_rows(rows)
+    logger.info(
+        "stock_period_data | symbol=%s period=%s adjust=%s start=%s end=%s rows=%s",
+        code,
+        period_key,
+        adjust_key,
+        start_ymd,
+        end_ymd,
+        len(df),
+    )
     payload = bars_to_payload(df)
     payload.update({
         "symbol": code,
@@ -1478,7 +1563,7 @@ async def _load_period_payload(
         "adjust": adjust_key,
         "count": len(df),
     })
-    return payload
+    return _sanitize_json(payload)
 
 # -------------------------
 # Stock bars endpoint
@@ -1625,6 +1710,7 @@ async def api_stock_daily(
     adjust: str = "",
     user: AuthenticatedUser = Depends(require_user),
 ):
+    await _enforce_daily_period_limit(user_id=int(user.id), period_key="daily")
     code = normalize_cn_symbol(symbol)
     try:
         return await _load_period_payload(
@@ -1649,6 +1735,10 @@ async def api_stock_period(
 ):
     code = normalize_cn_symbol(symbol)
     try:
+        period_key = str(period or "daily").lower()
+        if period_key not in {"daily", "weekly", "monthly"}:
+            raise HTTPException(status_code=400, detail="period must be one of: daily, weekly, monthly")
+        await _enforce_daily_period_limit(user_id=int(user.id), period_key=period_key)
         return await _load_period_payload(
             code=code,
             start=start,

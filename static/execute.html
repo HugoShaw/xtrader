@@ -1177,6 +1177,23 @@ function addMinutesToShanghaiTs(ts, minutes) {
   return toShTsYmdHmsFromMs(ms2);
 }
 
+const RATE_LIMIT_MS = 60 * 1000;
+let lastRateTs = 0;
+let rateChain = Promise.resolve();
+
+function rateLimitedFetch(url, options) {
+  rateChain = rateChain.then(async () => {
+    const now = Date.now();
+    const waitMs = Math.max(0, RATE_LIMIT_MS - (now - lastRateTs));
+    if (waitMs > 0) {
+      await new Promise((r) => setTimeout(r, waitMs));
+    }
+    lastRateTs = Date.now();
+    return fetch(url, options);
+  });
+  return rateChain;
+}
+
 async function fetchBarsFromApi(symbol, start, end, freq = "1", limit = null) {
   try {
     let url =
@@ -1190,7 +1207,7 @@ async function fetchBarsFromApi(symbol, start, end, freq = "1", limit = null) {
       url += `&limit=${encodeURIComponent(String(limit))}`;
     }
 
-    const resp = await fetch(url, {
+    const resp = await rateLimitedFetch(url, {
       method: "GET",
       credentials: "same-origin",
     });

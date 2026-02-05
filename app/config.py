@@ -53,6 +53,9 @@ class Settings(BaseSettings):
  
     timezone_name: str = Field(default="Asia/Shanghai", alias="TIMEZONE_NAME")
 
+    # Stock API fallback metrics
+    stock_api_fallback_log: bool = Field(default=False, alias="STOCK_API_FALLBACK_LOG")
+
     # Auth (simple cookie session)
     auth_secret_key: str = Field(default="dev-insecure-change-me", alias="AUTH_SECRET_KEY")
     auth_session_ttl_seconds: int = Field(default=60 * 60 * 12, alias="AUTH_SESSION_TTL_SECONDS")
